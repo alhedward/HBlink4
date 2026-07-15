@@ -729,6 +729,8 @@ class EventReceiver:
                         'talkgroup': data.get('dst_id', 0),
                         'call_type': data.get('call_type', 'group'),  # "group" or "private" (addressing)
                         'is_data': data.get('is_data', False),  # voice vs data (payload kind)
+                        'stream_id': data.get('stream_id'),
+                        'started_at': event['timestamp'],
                         'last_heard': event['timestamp'],
                         'active': True  # Mark as currently active
                     }
@@ -764,8 +766,25 @@ class EventReceiver:
                 key = f"{data['repeater_id']}.{data['slot']}"
                 
             if key in state.streams:
-                state.streams[key]['packets'] = data['packets']
-                state.streams[key]['duration'] = data['duration']
+                stream = state.streams[key]
+                stream['packets'] = data['packets']
+                stream['duration'] = data['duration']
+                if data.get('rf_quality') is not None:
+                    stream['rf_quality'] = data['rf_quality']
+
+                # Keep the active Last Heard record in sync for clients that
+                # choose to show live quality while the transmission is on air.
+                stream_id = stream.get('stream_id')
+                if stream_id:
+                    user_entry = next((
+                        user for user in state.last_heard
+                        if user.get('stream_id') == stream_id
+                    ), None)
+                    if user_entry:
+                        user_entry['duration'] = data['duration']
+                        user_entry['packet_count'] = data['packets']
+                        if data.get('rf_quality') is not None:
+                            user_entry['rf_quality'] = data['rf_quality']
         
         elif event_type == 'stream_end':
             # Handle both repeater and outbound streams
@@ -783,19 +802,44 @@ class EventReceiver:
                 stream['duration'] = data['duration']
                 stream['end_reason'] = data.get('end_reason', 'unknown')
                 stream['hang_time'] = data.get('hang_time', 0)
+                if data.get('rf_quality') is not None:
+                    stream['rf_quality'] = data['rf_quality']
                 
                 # Only accumulate duration for RX streams (not assumed/TX streams or outbound)
                 if not data.get('is_assumed', False) and connection_type != 'outbound':
                     state.stats['total_duration_today'] += data['duration']
                 
-                # Update last_heard entry to mark as no longer active (only for repeater RX streams)
-                if connection_type != 'outbound':
+                # Finalise the matching Last Heard entry for every real RX
+                # stream, including traffic received from an outbound link.
+                # Match stream_id first so a late end event cannot overwrite a
+                # newer call from the same subscriber.
+                if not data.get('is_assumed', False):
                     src_id = stream.get('rf_src') or stream.get('src_id')
-                    if src_id:
-                        user_entry = next((u for u in state.last_heard if u['radio_id'] == src_id), None)
-                        if user_entry:
-                            user_entry['active'] = False
-                            user_entry['last_heard'] = event['timestamp']
+                    stream_id = stream.get('stream_id')
+                    user_entry = None
+                    if stream_id:
+                        user_entry = next((
+                            user for user in state.last_heard
+                            if user.get('stream_id') == stream_id
+                        ), None)
+                    if user_entry is None and src_id:
+                        # Backward-compatible fallback for entries created by
+                        # older HBlink versions without stream_id.
+                        user_entry = next((
+                            user for user in state.last_heard
+                            if user.get('radio_id') == src_id
+                        ), None)
+                    if user_entry:
+                        user_entry['active'] = False
+                        user_entry['last_heard'] = event['timestamp']
+                        user_entry['ended_at'] = event['timestamp']
+                        user_entry['duration'] = data['duration']
+                        user_entry['packet_count'] = data.get(
+                            'packet_count', data.get('packets', 0)
+                        )
+                        user_entry['end_reason'] = data.get('end_reason', 'unknown')
+                        if data.get('rf_quality') is not None:
+                            user_entry['rf_quality'] = data['rf_quality']
         
         elif event_type == 'hang_time_expired':
             # Hang time has expired, clear the slot (handle both repeater and outbound)

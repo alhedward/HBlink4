@@ -168,10 +168,10 @@ A server will, at a minimum, need to track a repeater in the following states:
 
 1. **DMRD (DMR Data)**
    - Direction: Bidirectional
-   - Format: `DMRD` + `sequence[1 byte]` + `rf_src[3 bytes]` + `dst_id[3 bytes]` + `radio_id[4 bytes]` + `_bits[1 byte]` + `stream_id[4 bytes]` + `payload[33 bytes]`
+   - Format: `DMRD` + `sequence[1 byte]` + `rf_src[3 bytes]` + `dst_id[3 bytes]` + `radio_id[4 bytes]` + `_bits[1 byte]` + `stream_id[4 bytes]` + `payload[33 bytes]` + `ber[1 byte]` + `rssi[1 byte]`
    - Purpose: Transfer DMR voice/data packets
    - Notes: Only processed when connection state is 'connected'
-   - Total Length: 53 bytes (4 + 1 + 3 + 3 + 4 + 1 + 4 + 33)
+   - Total Length: 55 bytes (4 + 1 + 3 + 3 + 4 + 1 + 4 + 33 + 1 + 1)
 
    **DMRD Packet Structure:**
    
@@ -185,6 +185,13 @@ A server will, at a minimum, need to track a repeater in the following states:
    | _bits       | 15     | 1      | Control bits (see below)          |
    | Stream ID   | 16     | 4      | Unique stream identifier          |
    | Payload     | 20     | 33     | DMR voice/data payload            |
+   | BER         | 53     | 1      | Corrected-bit count for the current protected voice burst |
+   | RSSI        | 54     | 1      | Unsigned magnitude in dBm; `0` means not reported |
+
+   For MMDVM-compatible voice bursts, BER is an error count over 141 protected
+   bits. For example, `3` means `3 / 141 = 2.13%` for that burst. RSSI is
+   encoded as a positive magnitude, so a wire value of `71` represents
+   `-71 dBm`. HBlink4 ignores BER/RSSI on headers, terminators and data bursts.
 
    **_bits Field (byte 15):**
    - Bit 7: Timeslot (0=Slot 1, 1=Slot 2)

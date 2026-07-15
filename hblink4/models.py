@@ -22,6 +22,9 @@ from time import time
 from random import randint
 from typing import Optional, Tuple, Dict, Any
 
+
+DMR_VOICE_PROTECTED_BITS = 141
+
 # Import utils functions that these models depend on
 try:
     from .utils import safe_decode_bytes, PeerAddress
@@ -95,6 +98,18 @@ class StreamState:
     target_repeaters: Optional[set] = None  # Cached set of repeater_ids approved for forwarding
     routing_cached: bool = False  # True once routing has been calculated
 
+    # RF-quality metadata from HomeBrew DMRD bytes 53 (BER corrected-bit
+    # count) and 54 (RSSI magnitude). These are populated only for real RX
+    # voice bursts. Assumed/TX streams deliberately remain empty because the
+    # server has no fresh RF measurement for traffic it is forwarding.
+    ber_error_total: int = 0
+    ber_sample_count: int = 0
+    ber_peak_errors: int = 0
+    rssi_dbm_total: int = 0
+    rssi_sample_count: int = 0
+    rssi_min_dbm: Optional[int] = None
+    rssi_max_dbm: Optional[int] = None
+
     # Unit-call metadata. `is_unit_call` is True when this stream carries a
     # private (subscriber-to-subscriber) call; `dst_id` holds the target radio
     # ID instead of a TGID in that case. `is_broadcast_unit_call` is True when
@@ -121,6 +136,62 @@ class StreamState:
     # BPTC encode per (dst, src) for the life of the stream.
     lc_base: Optional[bytes] = None
     lc_cache: Dict[Tuple[bytes, bytes], Any] = field(default_factory=dict)
+
+    def add_rf_quality_sample(self, ber_errors: Optional[int],
+                              rssi_dbm: Optional[int]) -> None:
+        """Accumulate one RF-quality sample from a received voice burst.
+
+        ``ber_errors`` is the corrected-bit count carried by the HomeBrew
+        packet for a protected 141-bit voice burst. A value of zero is a valid
+        perfect sample. Values above 141 are malformed and ignored.
+
+        ``rssi_dbm`` is a negative dBm value. ``None`` means the endpoint did
+        not report RSSI (wire value zero).
+        """
+        if ber_errors is not None and 0 <= ber_errors <= DMR_VOICE_PROTECTED_BITS:
+            self.ber_error_total += ber_errors
+            self.ber_sample_count += 1
+            self.ber_peak_errors = max(self.ber_peak_errors, ber_errors)
+
+        if rssi_dbm is not None and -255 <= rssi_dbm < 0:
+            self.rssi_dbm_total += rssi_dbm
+            self.rssi_sample_count += 1
+            if self.rssi_min_dbm is None or rssi_dbm < self.rssi_min_dbm:
+                self.rssi_min_dbm = rssi_dbm
+            if self.rssi_max_dbm is None or rssi_dbm > self.rssi_max_dbm:
+                self.rssi_max_dbm = rssi_dbm
+
+    def get_rf_quality(self) -> Optional[Dict[str, Any]]:
+        """Return a JSON-safe RF-quality summary, or ``None`` if empty."""
+        if self.ber_sample_count == 0 and self.rssi_sample_count == 0:
+            return None
+
+        quality: Dict[str, Any] = {}
+        if self.ber_sample_count:
+            quality.update({
+                'ber_average_percent': round(
+                    self.ber_error_total * 100.0
+                    / (DMR_VOICE_PROTECTED_BITS * self.ber_sample_count),
+                    2,
+                ),
+                'ber_peak_percent': round(
+                    self.ber_peak_errors * 100.0 / DMR_VOICE_PROTECTED_BITS,
+                    2,
+                ),
+                'ber_samples': self.ber_sample_count,
+            })
+
+        if self.rssi_sample_count:
+            quality.update({
+                'rssi_average_dbm': round(
+                    self.rssi_dbm_total / self.rssi_sample_count, 1
+                ),
+                'rssi_min_dbm': self.rssi_min_dbm,
+                'rssi_max_dbm': self.rssi_max_dbm,
+                'rssi_samples': self.rssi_sample_count,
+            })
+
+        return quality
 
     def is_active(self, timeout: float = 2.0) -> bool:
         """Check if stream is still active (within timeout period)"""
