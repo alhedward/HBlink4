@@ -1,0 +1,11 @@
+// Install as /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+// Change "cort" if hblink4-dash.service runs as a different user.
+// This grants only restart permission for hblink4.service.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "hblink4.service" &&
+        action.lookup("verb") == "restart" &&
+        subject.user == "cort") {
+        return polkit.Result.YES;
+    }
+});

@@ -10,24 +10,35 @@ import csv
 import socket
 import os
 import ipaddress
+import hmac
 import signal
 import atexit
 from datetime import datetime, date, timedelta
 from collections import deque
 from typing import Dict, List, Set, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Body
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
 
 try:
     from .user_db import UserDatabase, compute_next_refresh_seconds, _age_str
+    from .admin import (
+        AdminConfigError, AdminSessionManager, LoginRateLimiter, RestartController,
+        RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
+        verify_password,
+    )
 except ImportError:
     # Running the dashboard directly without package install
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).parent))
     from user_db import UserDatabase, compute_next_refresh_seconds, _age_str
+    from admin import (
+        AdminConfigError, AdminSessionManager, LoginRateLimiter, RestartController,
+        RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
+        verify_password,
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +83,23 @@ def load_config() -> dict:
                 "keep_stale_on_failure": True,
                 "min_rows_required": 1000
             }
+        },
+        "admin": {
+            "enabled": False,
+            "username": "admin",
+            "password_hash": "",
+            "session_timeout_minutes": 60,
+            "cookie_secure": False,
+            "hblink_config_path": "../config/config.json",
+            "backup_on_save": True,
+            "restart": {
+                "enabled": False,
+                "command": ["/usr/bin/systemctl", "restart", "hblink4.service"],
+                "status_command": ["/usr/bin/systemctl", "is-active", "hblink4.service"],
+                "timeout_seconds": 15,
+                "verify_attempts": 6,
+                "verify_delay_seconds": 0.5
+            }
         }
     }
     
@@ -95,6 +123,53 @@ def load_config() -> dict:
         return default_config
 
 dashboard_config = load_config()
+
+# Dashboard administration is intentionally opt-in. Credentials stay in the
+# dashboard process and are never exposed through the public /api/config API.
+ADMIN_COOKIE_NAME = "hblink4_admin_session"
+admin_config = dashboard_config.get("admin", {}) or {}
+admin_sessions = AdminSessionManager(admin_config.get("session_timeout_minutes", 60))
+login_limiter = LoginRateLimiter()
+
+
+def _admin_password_hash() -> str:
+    """Allow a deployment to keep the hash outside config.json if preferred."""
+    return os.environ.get("HBLINK4_DASH_ADMIN_PASSWORD_HASH", admin_config.get("password_hash", ""))
+
+
+def admin_available() -> bool:
+    return bool(
+        admin_config.get("enabled", False)
+        and admin_config.get("username")
+        and _admin_password_hash()
+    )
+
+
+def _admin_session(request: Request):
+    if not admin_available():
+        raise HTTPException(status_code=503, detail="Dashboard administration is not configured")
+    session = admin_sessions.get(request.cookies.get(ADMIN_COOKIE_NAME))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Administrator login required")
+    return session
+
+
+def _require_csrf(request: Request, session) -> None:
+    supplied = request.headers.get("X-CSRF-Token", "")
+    if not supplied or not hmac.compare_digest(supplied, session.csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+
+def _talkgroup_store() -> TalkgroupConfigStore:
+    configured = admin_config.get("hblink_config_path", "../config/config.json")
+    path = Path(configured)
+    if not path.is_absolute():
+        path = (Path(__file__).parent / path).resolve()
+    return TalkgroupConfigStore(path, backup_on_save=admin_config.get("backup_on_save", True))
+
+
+def _restart_controller() -> RestartController:
+    return RestartController(admin_config.get("restart", {}) or {})
 
 # In-memory state (could be Redis/database for persistence)
 class DashboardState:
@@ -939,8 +1014,151 @@ class EventReceiver:
 # REST API endpoints
 @app.get("/api/config")
 async def get_config():
-    """Get dashboard configuration"""
-    return dashboard_config
+    """Get public dashboard configuration without administrative secrets."""
+    public_config = {key: value for key, value in dashboard_config.items() if key != "admin"}
+    public_config["admin_available"] = admin_available()
+    return public_config
+
+
+@app.get("/api/admin/status")
+async def admin_status(request: Request):
+    """Return non-secret admin availability and current session status."""
+    enabled = bool(admin_config.get("enabled", False))
+    configured = bool(admin_config.get("username") and _admin_password_hash())
+    session = admin_sessions.get(request.cookies.get(ADMIN_COOKIE_NAME)) if configured else None
+    restart_cfg = admin_config.get("restart", {}) or {}
+    result = {
+        "enabled": enabled,
+        "configured": configured,
+        "authenticated": session is not None,
+        "restart_enabled": bool(restart_cfg.get("enabled", False)),
+    }
+    if session is not None:
+        result["username"] = session.username
+        result["csrf_token"] = session.csrf_token
+    return result
+
+
+@app.post("/api/admin/login")
+async def admin_login(request: Request, payload: dict = Body(...)):
+    """Authenticate an administrator and create an HttpOnly cookie session."""
+    if not admin_available():
+        raise HTTPException(status_code=503, detail="Dashboard administration is not configured")
+
+    client_key = request.client.host if request.client else "unknown"
+    retry_after = login_limiter.retry_after(client_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts; try again in {retry_after} seconds",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    username = payload.get("username", "") if isinstance(payload, dict) else ""
+    password = payload.get("password", "") if isinstance(payload, dict) else ""
+    if not isinstance(username, str) or not isinstance(password, str) or len(password) > 4096:
+        login_limiter.record_failure(client_key)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    configured_username = str(admin_config.get("username", ""))
+    username_ok = hmac.compare_digest(username, configured_username)
+    password_ok = await asyncio.to_thread(verify_password, password, _admin_password_hash())
+    if not (username_ok and password_ok):
+        login_limiter.record_failure(client_key)
+        logger.warning("Dashboard admin login failed from %s", client_key)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    login_limiter.record_success(client_key)
+    token, session = admin_sessions.create(configured_username)
+    response = JSONResponse(
+        {
+            "ok": True,
+            "username": session.username,
+            "csrf_token": session.csrf_token,
+        }
+    )
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        token,
+        max_age=admin_sessions.timeout_seconds,
+        httponly=True,
+        secure=bool(admin_config.get("cookie_secure", False)),
+        samesite="strict",
+        path="/",
+    )
+    logger.info("Dashboard admin login succeeded from %s", client_key)
+    return response
+
+
+@app.post("/api/admin/logout")
+async def admin_logout(request: Request):
+    """Destroy the current administrator session."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    token = request.cookies.get(ADMIN_COOKIE_NAME)
+    admin_sessions.destroy(token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(ADMIN_COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/admin/talkgroups")
+async def admin_get_talkgroups(request: Request):
+    """Return the editable repeater talkgroup ACLs only."""
+    _admin_session(request)
+    try:
+        return _talkgroup_store().load_for_editor()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/admin/talkgroups")
+async def admin_save_talkgroups(request: Request, payload: dict = Body(...)):
+    """Atomically update repeater talkgroup ACLs in config/config.json."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+    try:
+        saved = _talkgroup_store().save_talkgroups(
+            expected_revision=payload.get("revision"),
+            pattern_updates=payload.get("patterns"),
+            default_update=payload.get("default"),
+        )
+    except StaleConfigError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Dashboard admin %s updated HBlink4 talkgroup configuration", session.username
+    )
+    return {
+        "ok": True,
+        "restart_required": True,
+        "configuration": saved,
+    }
+
+
+@app.post("/api/admin/restart")
+async def admin_restart_hblink(request: Request):
+    """Restart HBlink4 using the fixed local command from dashboard config."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    restart_cfg = admin_config.get("restart", {}) or {}
+    if not restart_cfg.get("enabled", False):
+        raise HTTPException(status_code=409, detail="HBlink4 restart is disabled")
+
+    try:
+        controller = _restart_controller()
+        result = await controller.restart()
+    except (AdminConfigError, RestartError) as exc:
+        logger.error("Dashboard HBlink4 restart failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    logger.info("Dashboard admin %s restarted HBlink4 successfully", session.username)
+    return result
 
 
 @app.get("/api/repeaters")
@@ -1129,6 +1347,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # Serve frontend
+@app.get("/admin", response_class=HTMLResponse)
+async def dashboard_admin():
+    """Serve administrator login and talkgroup editor."""
+    html_path = Path(__file__).parent / 'static' / 'admin.html'
+    if not html_path.exists():
+        return HTMLResponse("<h1>Admin HTML not found</h1>", status_code=404)
+    with open(html_path) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     """Serve dashboard HTML"""

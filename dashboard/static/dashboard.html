@@ -767,6 +767,7 @@
             </div>
             <div class="status-badges">
                 <a class="network-info-btn" id="networkInfoBtn" style="display: none;" target="_blank">🌐 Network Info</a>
+                <a class="network-info-btn" id="adminBtn" href="/admin" style="display: none;">⚙️ Admin</a>
                 <div class="connection-status clickable warning" id="wsStatus" title="Connecting to dashboard server...">Connecting...</div>
                 <div class="connection-status warning" id="hblinkStatus" title="Waiting for connection status...">Unknown</div>
                 <div class="audio-toggle disabled" id="audioToggle" title="Click to enable audio notifications">🔇 Notifications</div>
@@ -1032,6 +1033,9 @@
                 } else {
                     networkInfoBtn.style.display = 'none';
                 }
+
+                const adminBtn = document.getElementById('adminBtn');
+                adminBtn.style.display = config.admin_available ? 'inline-block' : 'none';
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
