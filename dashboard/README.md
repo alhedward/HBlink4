@@ -182,3 +182,81 @@ Real-time updates via WebSocket
 ## License
 
 Same as HBlink4: GNU GPLv3
+
+## Administrator Talkgroup Editor
+
+The dashboard has an optional authenticated administration page at `/admin` for
+editing repeater talkgroup ACLs in `config/config.json`. The editor projection exposes only
+`slot1_talkgroups` and `slot2_talkgroups` from repeater patterns and the optional
+default repeater configuration. Before the editor unlocks, the administrator must
+download a complete config backup. That explicit backup contains passphrases and
+all other HBlink4 settings, so it must be stored securely.
+
+Administration is disabled by default. Generate a password hash interactively:
+
+```bash
+python3 scripts/hash_dashboard_password.py
+```
+
+Add the resulting hash to `dashboard/config.json` and enable the admin section:
+
+```json
+"admin": {
+    "enabled": true,
+    "username": "admin",
+    "password_hash": "pbkdf2_sha256$...",
+    "session_timeout_minutes": 60,
+    "cookie_secure": false,
+    "hblink_config_path": "../config/config.json",
+    "backup_on_save": true,
+    "restart": {
+        "enabled": true,
+        "command": ["/usr/bin/systemctl", "restart", "hblink4.service"],
+        "status_command": ["/usr/bin/systemctl", "is-active", "hblink4.service"],
+        "timeout_seconds": 15,
+        "verify_attempts": 6,
+        "verify_delay_seconds": 0.5
+    }
+}
+```
+
+`HBLINK4_DASH_ADMIN_PASSWORD_HASH` can be used instead of storing the hash in
+`dashboard/config.json`. Set `cookie_secure` to `true` when the dashboard is
+served over HTTPS.
+
+The talkgroup editor preserves HBlink4's ACL semantics:
+
+- `null` = allow all talkgroups
+- `[]` = deny all talkgroups
+- `[91, 505, ...]` = allow only the listed talkgroups
+
+New TG IDs can be added individually or in comma/space-separated groups. Each
+administrator login session is gated until `/api/admin/config-backup` has
+downloaded the current complete config and the editor verifies that revision.
+Saves are revision checked, validated with HBlink4's repeater matcher, written
+atomically, and (by default) retain the previous file as `config.json.bak`.
+
+The same admin page can restore one of those complete JSON backups after a rebuild.
+Restore is authenticated, CSRF-protected, limited to 2 MiB, validates the HBlink4
+repeater configuration structure, and atomically replaces the live file while
+retaining the previous live config as `config.json.bak`. HBlink4 must be restarted
+before saved or restored configuration becomes active.
+
+### Dashboard restart permission
+
+The browser cannot supply a shell command. The server runs only the fixed
+`admin.restart.command` configured locally and verifies the service with the
+fixed status command. On systems with a Polkit version that supports JavaScript `.rules`, the supplied
+rule can authorize the `cort` dashboard user to restart only `hblink4.service`:
+
+```bash
+sudo cp hblink4-dashboard-restart.rules /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+sudo chown root:root /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+sudo chmod 0644 /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+```
+
+If the dashboard service runs under another account, change `subject.user` in
+the rule before installing it. Ubuntu 22.04 ships an older Polkit implementation
+that does not consume these JavaScript `.rules`; deployments on that release need
+a narrowly scoped helper instead. Do not replace this with unrestricted passwordless
+`sudo` access.

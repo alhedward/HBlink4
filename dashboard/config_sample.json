@@ -33,13 +33,41 @@
             "on_startup_if_older_than_hours": 36
         },
         "filter": {
-            "countries": ["United States", "Canada"],
+            "countries": [
+                "United States",
+                "Canada"
+            ],
             "callsign_regex": null,
             "radio_id_ranges": null
         },
         "fallback": {
             "keep_stale_on_failure": true,
             "min_rows_required": 1000
+        }
+    },
+    "admin": {
+        "enabled": false,
+        "username": "admin",
+        "password_hash": "",
+        "session_timeout_minutes": 60,
+        "cookie_secure": false,
+        "hblink_config_path": "../config/config.json",
+        "backup_on_save": true,
+        "restart": {
+            "enabled": false,
+            "command": [
+                "/usr/bin/systemctl",
+                "restart",
+                "hblink4.service"
+            ],
+            "status_command": [
+                "/usr/bin/systemctl",
+                "is-active",
+                "hblink4.service"
+            ],
+            "timeout_seconds": 15,
+            "verify_attempts": 6,
+            "verify_delay_seconds": 0.5
         }
     }
 }

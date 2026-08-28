@@ -10,24 +10,35 @@ import csv
 import socket
 import os
 import ipaddress
+import hmac
 import signal
 import atexit
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from collections import deque
 from typing import Dict, List, Set, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Body
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
 
 try:
     from .user_db import UserDatabase, compute_next_refresh_seconds, _age_str
+    from .admin import (
+        AdminConfigError, AdminSessionManager, LoginRateLimiter, RestartController,
+        RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
+        verify_password,
+    )
 except ImportError:
     # Running the dashboard directly without package install
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).parent))
     from user_db import UserDatabase, compute_next_refresh_seconds, _age_str
+    from admin import (
+        AdminConfigError, AdminSessionManager, LoginRateLimiter, RestartController,
+        RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
+        verify_password,
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +83,23 @@ def load_config() -> dict:
                 "keep_stale_on_failure": True,
                 "min_rows_required": 1000
             }
+        },
+        "admin": {
+            "enabled": False,
+            "username": "admin",
+            "password_hash": "",
+            "session_timeout_minutes": 60,
+            "cookie_secure": False,
+            "hblink_config_path": "../config/config.json",
+            "backup_on_save": True,
+            "restart": {
+                "enabled": False,
+                "command": ["/usr/bin/systemctl", "restart", "hblink4.service"],
+                "status_command": ["/usr/bin/systemctl", "is-active", "hblink4.service"],
+                "timeout_seconds": 15,
+                "verify_attempts": 6,
+                "verify_delay_seconds": 0.5
+            }
         }
     }
     
@@ -95,6 +123,62 @@ def load_config() -> dict:
         return default_config
 
 dashboard_config = load_config()
+
+# Dashboard administration is intentionally opt-in. Credentials stay in the
+# dashboard process and are never exposed through the public /api/config API.
+ADMIN_COOKIE_NAME = "hblink4_admin_session"
+admin_config = dashboard_config.get("admin", {}) or {}
+admin_sessions = AdminSessionManager(admin_config.get("session_timeout_minutes", 60))
+login_limiter = LoginRateLimiter()
+MAX_CONFIG_UPLOAD_BYTES = 2 * 1024 * 1024
+
+
+def _admin_password_hash() -> str:
+    """Allow a deployment to keep the hash outside config.json if preferred."""
+    return os.environ.get("HBLINK4_DASH_ADMIN_PASSWORD_HASH", admin_config.get("password_hash", ""))
+
+
+def admin_available() -> bool:
+    return bool(
+        admin_config.get("enabled", False)
+        and admin_config.get("username")
+        and _admin_password_hash()
+    )
+
+
+def _admin_session(request: Request):
+    if not admin_available():
+        raise HTTPException(status_code=503, detail="Dashboard administration is not configured")
+    session = admin_sessions.get(request.cookies.get(ADMIN_COOKIE_NAME))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Administrator login required")
+    return session
+
+
+def _require_csrf(request: Request, session) -> None:
+    supplied = request.headers.get("X-CSRF-Token", "")
+    if not supplied or not hmac.compare_digest(supplied, session.csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+
+def _talkgroup_store() -> TalkgroupConfigStore:
+    configured = admin_config.get("hblink_config_path", "../config/config.json")
+    path = Path(configured)
+    if not path.is_absolute():
+        path = (Path(__file__).parent / path).resolve()
+    return TalkgroupConfigStore(path, backup_on_save=admin_config.get("backup_on_save", True))
+
+
+def _require_config_backup(session) -> None:
+    if not session.config_backup_confirmed:
+        raise HTTPException(
+            status_code=428,
+            detail="Download the current HBlink4 config backup before editing or restoring configuration",
+        )
+
+
+def _restart_controller() -> RestartController:
+    return RestartController(admin_config.get("restart", {}) or {})
 
 # In-memory state (could be Redis/database for persistence)
 class DashboardState:
@@ -763,6 +847,8 @@ class EventReceiver:
                         'talkgroup': data.get('dst_id', 0),
                         'call_type': data.get('call_type', 'group'),  # "group" or "private" (addressing)
                         'is_data': data.get('is_data', False),  # voice vs data (payload kind)
+                        'stream_id': data.get('stream_id'),
+                        'started_at': event['timestamp'],
                         'last_heard': event['timestamp'],
                         'active': True  # Mark as currently active
                     }
@@ -802,8 +888,25 @@ class EventReceiver:
                 key = f"{data['repeater_id']}.{data['slot']}"
 
             if key in state.streams:
-                state.streams[key]['packets'] = data['packets']
-                state.streams[key]['duration'] = data['duration']
+                stream = state.streams[key]
+                stream['packets'] = data['packets']
+                stream['duration'] = data['duration']
+                if data.get('rf_quality') is not None:
+                    stream['rf_quality'] = data['rf_quality']
+
+                # Keep the active Last Heard record in sync for clients that
+                # choose to show live quality while the transmission is on air.
+                stream_id = stream.get('stream_id')
+                if stream_id:
+                    user_entry = next((
+                        user for user in state.last_heard
+                        if user.get('stream_id') == stream_id
+                    ), None)
+                    if user_entry:
+                        user_entry['duration'] = data['duration']
+                        user_entry['packet_count'] = data['packets']
+                        if data.get('rf_quality') is not None:
+                            user_entry['rf_quality'] = data['rf_quality']
         
         elif event_type == 'stream_end':
             # Handle both repeater and outbound streams
@@ -823,19 +926,44 @@ class EventReceiver:
                 stream['duration'] = data['duration']
                 stream['end_reason'] = data.get('end_reason', 'unknown')
                 stream['hang_time'] = data.get('hang_time', 0)
+                if data.get('rf_quality') is not None:
+                    stream['rf_quality'] = data['rf_quality']
                 
                 # Only accumulate duration for RX streams (not assumed/TX streams or outbound)
                 if not data.get('is_assumed', False) and connection_type != 'outbound':
                     state.stats['total_duration_today'] += data['duration']
                 
-                # Update last_heard entry to mark as no longer active (only for repeater RX streams)
-                if connection_type != 'outbound':
+                # Finalise the matching Last Heard entry for every real RX
+                # stream, including traffic received from an outbound link.
+                # Match stream_id first so a late end event cannot overwrite a
+                # newer call from the same subscriber.
+                if not data.get('is_assumed', False):
                     src_id = stream.get('rf_src') or stream.get('src_id')
-                    if src_id:
-                        user_entry = next((u for u in state.last_heard if u['radio_id'] == src_id), None)
-                        if user_entry:
-                            user_entry['active'] = False
-                            user_entry['last_heard'] = event['timestamp']
+                    stream_id = stream.get('stream_id')
+                    user_entry = None
+                    if stream_id:
+                        user_entry = next((
+                            user for user in state.last_heard
+                            if user.get('stream_id') == stream_id
+                        ), None)
+                    if user_entry is None and src_id:
+                        # Backward-compatible fallback for entries created by
+                        # older HBlink versions without stream_id.
+                        user_entry = next((
+                            user for user in state.last_heard
+                            if user.get('radio_id') == src_id
+                        ), None)
+                    if user_entry:
+                        user_entry['active'] = False
+                        user_entry['last_heard'] = event['timestamp']
+                        user_entry['ended_at'] = event['timestamp']
+                        user_entry['duration'] = data['duration']
+                        user_entry['packet_count'] = data.get(
+                            'packet_count', data.get('packets', 0)
+                        )
+                        user_entry['end_reason'] = data.get('end_reason', 'unknown')
+                        if data.get('rf_quality') is not None:
+                            user_entry['rf_quality'] = data['rf_quality']
 
                 # OBP is stream-multiplexed with no hang time — drop the ended stream now.
                 if connection_type == 'openbridge':
@@ -958,8 +1086,253 @@ class EventReceiver:
 # REST API endpoints
 @app.get("/api/config")
 async def get_config():
-    """Get dashboard configuration"""
-    return dashboard_config
+    """Get public dashboard configuration without administrative secrets."""
+    public_config = {key: value for key, value in dashboard_config.items() if key != "admin"}
+    public_config["admin_available"] = admin_available()
+    return public_config
+
+
+@app.get("/api/admin/status")
+async def admin_status(request: Request):
+    """Return non-secret admin availability and current session status."""
+    enabled = bool(admin_config.get("enabled", False))
+    configured = bool(admin_config.get("username") and _admin_password_hash())
+    session = admin_sessions.get(request.cookies.get(ADMIN_COOKIE_NAME)) if configured else None
+    restart_cfg = admin_config.get("restart", {}) or {}
+    result = {
+        "enabled": enabled,
+        "configured": configured,
+        "authenticated": session is not None,
+        "restart_enabled": bool(restart_cfg.get("enabled", False)),
+    }
+    if session is not None:
+        result["username"] = session.username
+        result["csrf_token"] = session.csrf_token
+        result["config_backup_downloaded"] = bool(session.config_backup_revision)
+        result["config_backup_ready"] = bool(session.config_backup_confirmed)
+    return result
+
+
+@app.post("/api/admin/login")
+async def admin_login(request: Request, payload: dict = Body(...)):
+    """Authenticate an administrator and create an HttpOnly cookie session."""
+    if not admin_available():
+        raise HTTPException(status_code=503, detail="Dashboard administration is not configured")
+
+    client_key = request.client.host if request.client else "unknown"
+    retry_after = login_limiter.retry_after(client_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts; try again in {retry_after} seconds",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    username = payload.get("username", "") if isinstance(payload, dict) else ""
+    password = payload.get("password", "") if isinstance(payload, dict) else ""
+    if not isinstance(username, str) or not isinstance(password, str) or len(password) > 4096:
+        login_limiter.record_failure(client_key)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    configured_username = str(admin_config.get("username", ""))
+    username_ok = hmac.compare_digest(username, configured_username)
+    password_ok = await asyncio.to_thread(verify_password, password, _admin_password_hash())
+    if not (username_ok and password_ok):
+        login_limiter.record_failure(client_key)
+        logger.warning("Dashboard admin login failed from %s", client_key)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    login_limiter.record_success(client_key)
+    token, session = admin_sessions.create(configured_username)
+    response = JSONResponse(
+        {
+            "ok": True,
+            "username": session.username,
+            "csrf_token": session.csrf_token,
+        }
+    )
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        token,
+        max_age=admin_sessions.timeout_seconds,
+        httponly=True,
+        secure=bool(admin_config.get("cookie_secure", False)),
+        samesite="strict",
+        path="/",
+    )
+    logger.info("Dashboard admin login succeeded from %s", client_key)
+    return response
+
+
+@app.post("/api/admin/logout")
+async def admin_logout(request: Request):
+    """Destroy the current administrator session."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    token = request.cookies.get(ADMIN_COOKIE_NAME)
+    admin_sessions.destroy(token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(ADMIN_COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/admin/config-backup")
+async def admin_download_config_backup(request: Request):
+    """Download the complete HBlink4 config as the required pre-edit backup."""
+    session = _admin_session(request)
+    try:
+        raw, revision = _talkgroup_store().export_full_config()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Do not mutate/unlock the editing gate merely because the server started
+    # a response. The browser confirms the revision in a separate
+    # CSRF-protected request only after it has received the complete backup body
+    # and triggered the local download. This also means an optional extra backup
+    # while editing does not unexpectedly re-lock the current session.
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"hblink4-config-{timestamp}.json"
+    logger.info("Dashboard admin %s requested a full HBlink4 config backup", session.username)
+    return Response(
+        content=raw,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "X-HBlink4-Config-Revision": revision,
+        },
+    )
+
+
+@app.post("/api/admin/config-backup-confirm")
+async def admin_confirm_config_backup(request: Request, payload: dict = Body(...)):
+    """Unlock editing after the browser has received the complete backup bytes."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    revision = payload.get("revision")
+    if not isinstance(revision, str) or not revision:
+        raise HTTPException(status_code=400, detail="Backup revision is required")
+
+    try:
+        current = _talkgroup_store().load_for_editor()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if current["revision"] != revision:
+        session.config_backup_revision = None
+        session.config_backup_confirmed = False
+        raise HTTPException(
+            status_code=428,
+            detail="HBlink4 config changed during the backup download; download a fresh backup before editing",
+        )
+
+    session.config_backup_revision = revision
+    session.config_backup_confirmed = True
+    logger.info("Dashboard admin %s confirmed receipt of the full HBlink4 config backup", session.username)
+    return {"ok": True, "revision": revision}
+
+
+@app.get("/api/admin/talkgroups")
+async def admin_get_talkgroups(request: Request):
+    """Return editable ACLs only after the current config has been downloaded."""
+    session = _admin_session(request)
+    _require_config_backup(session)
+    try:
+        result = _talkgroup_store().load_for_editor()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if result["revision"] != session.config_backup_revision:
+        session.config_backup_revision = None
+        session.config_backup_confirmed = False
+        raise HTTPException(
+            status_code=428,
+            detail="HBlink4 config changed after the backup download; download a fresh backup before editing",
+        )
+    return result
+
+
+@app.post("/api/admin/config-restore")
+async def admin_restore_config(request: Request):
+    """Restore a complete HBlink4 config from an authenticated uploaded backup."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    _require_config_backup(session)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_CONFIG_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Uploaded config exceeds the 2 MiB limit")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+
+    raw = await request.body()
+    if len(raw) > MAX_CONFIG_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded config exceeds the 2 MiB limit")
+
+    try:
+        restored = _talkgroup_store().restore_full_config(raw)
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.warning("Dashboard admin %s restored the complete HBlink4 configuration", session.username)
+    return {
+        "ok": True,
+        "restart_required": True,
+        "configuration": restored,
+    }
+
+
+@app.put("/api/admin/talkgroups")
+async def admin_save_talkgroups(request: Request, payload: dict = Body(...)):
+    """Atomically update repeater talkgroup ACLs in config/config.json."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    _require_config_backup(session)
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+    try:
+        saved = _talkgroup_store().save_talkgroups(
+            expected_revision=payload.get("revision"),
+            pattern_updates=payload.get("patterns"),
+            default_update=payload.get("default"),
+        )
+    except StaleConfigError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Dashboard admin %s updated HBlink4 talkgroup configuration", session.username
+    )
+    return {
+        "ok": True,
+        "restart_required": True,
+        "configuration": saved,
+    }
+
+
+@app.post("/api/admin/restart")
+async def admin_restart_hblink(request: Request):
+    """Restart HBlink4 using the fixed local command from dashboard config."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    restart_cfg = admin_config.get("restart", {}) or {}
+    if not restart_cfg.get("enabled", False):
+        raise HTTPException(status_code=409, detail="HBlink4 restart is disabled")
+
+    try:
+        controller = _restart_controller()
+        result = await controller.restart()
+    except (AdminConfigError, RestartError) as exc:
+        logger.error("Dashboard HBlink4 restart failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    logger.info("Dashboard admin %s restarted HBlink4 successfully", session.username)
+    return result
 
 
 @app.get("/api/repeaters")
@@ -1149,6 +1522,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # Serve frontend
+@app.get("/admin", response_class=HTMLResponse)
+async def dashboard_admin():
+    """Serve administrator login and talkgroup editor."""
+    html_path = Path(__file__).parent / 'static' / 'admin.html'
+    if not html_path.exists():
+        return HTMLResponse("<h1>Admin HTML not found</h1>", status_code=404)
+    with open(html_path) as f:
+        return HTMLResponse(f.read())
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     """Serve dashboard HTML"""

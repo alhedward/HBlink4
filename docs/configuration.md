@@ -904,3 +904,16 @@ See `config/config_sample.json` in the repository for a complete example showing
 ## Example Configuration
 
 See the `config/hblink.json` file in the repository for a complete example configuration with multiple patterns and talkgroups.
+
+## Dashboard Administration and Talkgroup Editing
+
+The dashboard process has a separate configuration file,
+`dashboard/config.json`. Its optional `admin` section enables a protected
+`/admin` page that edits only repeater `slot1_talkgroups` and
+`slot2_talkgroups` in the main `config/config.json` file. See
+`dashboard/config_sample.json` for all settings and `dashboard/README.md` for
+password setup and systemd restart permissions.
+
+The editor supports adding and removing TG IDs and preserves the core ACL
+meaning of `null` (allow all), an empty list (deny all), and a populated list
+(allow only those TGs). It does not expose or edit repeater passphrases.

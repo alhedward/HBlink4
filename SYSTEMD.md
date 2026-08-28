@@ -138,3 +138,26 @@ Common issues:
 - Both services have `Restart=always` for automatic recovery
 - Logs are sent to systemd journal, not file-based logging
 - Services run with the same privileges as the `cort` user
+
+## Dashboard-controlled HBlink4 restart
+
+The authenticated dashboard admin page can restart `hblink4.service` after a
+talkgroup configuration change. Keep `NoNewPrivileges=true` on the dashboard
+service. Do **not** grant the dashboard user unrestricted `sudo systemctl` access.
+
+Install the repository's narrowly scoped Polkit rule instead:
+
+```bash
+sudo cp hblink4-dashboard-restart.rules /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+sudo chown root:root /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+sudo chmod 0644 /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
+```
+
+The supplied rule permits user `cort` to perform only the `restart` verb on
+`hblink4.service`. If `User=` in `hblink4-dash.service` is changed, update the
+rule to match that account. `systemctl is-active hblink4.service` is used after
+the restart to verify HBlink4 returned to the active state.
+
+Enable the restart button separately under `admin.restart` in
+`dashboard/config.json`; see `dashboard/config_sample.json` and
+`dashboard/README.md`.

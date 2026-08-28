@@ -737,13 +737,29 @@ Stream tracking emits real-time events to the dashboard:
     "src_id": 3121234,
     "dst_id": 3120,
     "duration": 2.46,
-    "packets": 41,
+    "packet_count": 41,
     "end_reason": "terminator",
     "hang_time": 10.0,
     "call_type": "group",
-    "is_assumed": false
+    "is_assumed": false,
+    "rf_quality": {
+        "ber_average_percent": 0.71,
+        "ber_peak_percent": 2.13,
+        "ber_samples": 39,
+        "rssi_average_dbm": -71.5,
+        "rssi_min_dbm": -78,
+        "rssi_max_dbm": -67,
+        "rssi_samples": 39
+    }
 }
 ```
+
+
+`rf_quality` is additive and omitted when the source endpoint supplies no valid
+voice-burst metadata. BER is calculated from the corrected-bit count over 141
+protected bits per sampled voice burst. RSSI fields are omitted independently
+when the endpoint reports zero (unavailable). Assumed/TX streams never acquire
+new RF-quality measurements.
 
 ### hang_time_expired
 ```json

@@ -718,6 +718,8 @@ class HBProtocol(asyncio.DatagramProtocol):
         _call_type = packet['call_type']
         _frame_type = packet['frame_type']
         _stream_id = packet['stream_id']
+        _ber_errors = packet['ber_errors']
+        _rssi_dbm = packet['rssi_dbm']
         
         src_id = packet['src_id_int']
         remote_repeater_id = packet['repeater_id_int']
@@ -821,6 +823,13 @@ class HBProtocol(asyncio.DatagramProtocol):
             current_stream.last_seen = current_time
             current_stream.packet_count += 1
         
+        # DMRD BER/RSSI applies to received RF voice bursts only. The source
+        # endpoint may be a remote HBlink/MMDVM system; the metadata still
+        # describes the original RF ingress and is safe to carry end-to-end.
+        rx_stream = outbound_state.get_slot_stream(_slot)
+        if rx_stream and _frame_type in (0, 1):
+            rx_stream.add_rf_quality_sample(_ber_errors, _rssi_dbm)
+
         # Handle terminator
         if _is_terminator and current_stream:
             dummy_id = outbound_state.config.radio_id.to_bytes(4, 'big')
@@ -1368,6 +1377,10 @@ class HBProtocol(asyncio.DatagramProtocol):
             'is_data': emit_is_data,
         }
         
+        rf_quality = stream.get_rf_quality()
+        if rf_quality is not None:
+            event_data['rf_quality'] = rf_quality
+
         if connection_type == 'repeater':
             event_data['repeater_id'] = int(connection_id) if isinstance(connection_id, str) else connection_id
         else:  # outbound
@@ -3725,6 +3738,8 @@ class HBProtocol(asyncio.DatagramProtocol):
         _call_type = packet['call_type']
         _frame_type = packet['frame_type']
         _stream_id = packet['stream_id']
+        _ber_errors = packet['ber_errors']
+        _rssi_dbm = packet['rssi_dbm']
         _dtype_vseq = data[15] & 0x0F
         _payload = data[20:53] if len(data) >= 53 else b''
 
@@ -3747,6 +3762,14 @@ class HBProtocol(asyncio.DatagramProtocol):
 
         # Get the current stream for this slot (after _handle_stream_packet has updated it)
         current_stream = repeater.get_slot_stream(_slot)
+
+        # BER byte 53 is a corrected-bit count for each protected 141-bit
+        # voice burst. RSSI byte 54 is an unsigned magnitude (70 means
+        # -70 dBm); zero means the endpoint did not report RSSI. Ignore
+        # headers, terminators and data bursts so a zero BER on those frames
+        # is not mistaken for a perfect voice sample.
+        if current_stream and _frame_type in (0, 1):
+            current_stream.add_rf_quality_sample(_ber_errors, _rssi_dbm)
 
         # Data streams are tracked (so fast-terminator/contention logic stays
         # quiet) and emitted to the dashboard, but never forwarded. Drop here
@@ -3771,7 +3794,7 @@ class HBProtocol(asyncio.DatagramProtocol):
         
         # Emit stream_update every 60 packets (10 superframes = 1 second)
         if current_stream and not current_stream.ended and current_stream.packet_count % 60 == 0:
-            self._events.emit('stream_update', {
+            update_data = {
                 'repeater_id': rid_to_int(repeater_id),
                 'slot': _slot,
                 'src_id': int.from_bytes(current_stream.rf_src, 'big'),
@@ -3779,7 +3802,11 @@ class HBProtocol(asyncio.DatagramProtocol):
                 'duration': round(time() - current_stream.start_time, 2),
                 'packets': current_stream.packet_count,
                 'call_type': current_stream.call_type
-            })
+            }
+            rf_quality = current_stream.get_rf_quality()
+            if rf_quality is not None:
+                update_data['rf_quality'] = rf_quality
+            self._events.emit('stream_update', update_data)
         
         # Stream end detection: terminator (primary) or timeout (fallback)
         # Hang time prevents slot hijacking during conversations

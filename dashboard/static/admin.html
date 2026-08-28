@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HBlink4 Administration</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        a { color: #38bdf8; }
+        .container { max-width: 1120px; margin: 0 auto; padding: 24px 18px 60px; }
+        header {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; margin-bottom: 22px;
+        }
+        h1 { margin: 0; font-size: 1.7rem; }
+        h2 { margin-top: 0; }
+        .subtle { color: #94a3b8; }
+        .card {
+            background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+            padding: 18px; margin-bottom: 16px;
+        }
+        .login-card { max-width: 480px; margin: 70px auto 0; }
+        label { display: block; font-weight: 600; margin: 12px 0 6px; }
+        input, select {
+            width: 100%; background: #0f172a; color: #e2e8f0; border: 1px solid #475569;
+            border-radius: 7px; padding: 10px 11px; font-size: 0.95rem;
+        }
+        button, .button-link {
+            border: 0; border-radius: 7px; padding: 10px 14px; font-size: 0.93rem;
+            font-weight: 650; cursor: pointer; text-decoration: none; display: inline-block;
+            background: #0284c7; color: white;
+        }
+        button.secondary, .button-link.secondary { background: #475569; }
+        button.danger { background: #b91c1c; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+        .top-actions { justify-content: flex-end; }
+        .message { border-radius: 8px; padding: 11px 13px; margin: 0 0 16px; display: none; }
+        .message.info { display: block; background: #0c4a6e; }
+        .message.success { display: block; background: #14532d; }
+        .message.error { display: block; background: #7f1d1d; }
+        .pattern-title { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+        .pattern-title h3 { margin: 0 0 5px; }
+        .match { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; font-size: 0.82rem; }
+        .trust { background: #854d0e; color: #fef3c7; border-radius: 999px; padding: 3px 8px; font-size: 0.75rem; }
+        .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+        .slot-editor { background: #111827; border: 1px solid #374151; border-radius: 9px; padding: 13px; }
+        .slot-editor > label { margin-top: 0; }
+        .tg-entry { display: flex; gap: 7px; margin-top: 10px; }
+        .tg-entry input { flex: 1; }
+        .tg-entry button { flex: none; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; min-height: 28px; }
+        .chip {
+            display: inline-flex; align-items: center; gap: 6px; background: #334155;
+            border-radius: 999px; padding: 5px 8px 5px 10px; font-family: ui-monospace, monospace;
+        }
+        .chip button { background: transparent; color: #fca5a5; padding: 0 3px; font-size: 1rem; }
+        .empty-note { color: #64748b; font-size: 0.85rem; padding-top: 4px; }
+        .footer-actions {
+            position: sticky; bottom: 0; background: rgba(15, 23, 42, 0.96);
+            border-top: 1px solid #334155; padding: 13px 0; margin-top: 22px;
+        }
+        .warning { color: #fbbf24; }
+        .backup-warning { border-left: 4px solid #f59e0b; padding-left: 12px; }
+        .file-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; margin-top: 12px; }
+        .file-row input[type="file"] { padding: 8px; }
+        .hidden { display: none !important; }
+        @media (max-width: 760px) {
+            .slots, .file-row { grid-template-columns: 1fr; }
+            header { align-items: flex-start; flex-direction: column; }
+            .top-actions { justify-content: flex-start; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>HBlink4 Administration</h1>
+            <div class="subtle">Repeater talkgroup access control</div>
+        </div>
+        <div class="actions top-actions">
+            <a class="button-link secondary" href="/">← Dashboard</a>
+            <button id="logoutBtn" class="secondary hidden" type="button">Log out</button>
+        </div>
+    </header>
+
+    <div id="message" class="message"></div>
+
+    <section id="setupPanel" class="card hidden">
+        <h2>Administration is not configured</h2>
+        <p>Enable the <code>admin</code> section in <code>dashboard/config.json</code> and set a password hash before using this page.</p>
+        <p class="subtle">Generate a password hash with <code>python3 scripts/hash_dashboard_password.py</code>, then restart the dashboard service.</p>
+    </section>
+
+    <section id="loginPanel" class="card login-card hidden">
+        <h2>Administrator login</h2>
+        <form id="loginForm">
+            <label for="username">Username</label>
+            <input id="username" name="username" autocomplete="username" required>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <div class="actions" style="margin-top: 16px;">
+                <button id="loginBtn" type="submit">Log in</button>
+            </div>
+        </form>
+    </section>
+
+    <section id="backupPanel" class="card hidden">
+        <h2>Backup required before configuration changes</h2>
+        <div class="backup-warning">
+            <p><strong>Download the current complete HBlink4 config before editing or restoring anything.</strong></p>
+            <p class="subtle">This backup includes repeater passphrases and other sensitive settings. Store it securely. The editor remains locked until the complete JSON backup has been received by your browser and the download has been triggered.</p>
+        </div>
+        <div class="actions" style="margin-top: 16px;">
+            <button id="requiredBackupBtn" type="button">Download current config backup</button>
+            <span id="backupHint" class="subtle"></span>
+        </div>
+    </section>
+
+    <main id="editorPanel" class="hidden">
+        <div class="card">
+            <strong>Talkgroup ACL editor</strong>
+            <p class="subtle" style="margin-bottom:0;">
+                Each slot can allow all talkgroups, deny all talkgroups, or allow a specific list.
+                Saving changes updates the HBlink4 JSON config but does not alter passphrases or pattern matching rules.
+            </p>
+        </div>
+        <div class="card">
+            <strong>Full configuration backup &amp; restore</strong>
+            <p class="subtle">Download another complete backup at any time, or restore a previously downloaded HBlink4 config after a rebuild. Restoring replaces the complete config and requires an HBlink4 restart.</p>
+            <div class="actions">
+                <button id="downloadAgainBtn" class="secondary" type="button">Download current config</button>
+            </div>
+            <div class="file-row">
+                <div>
+                    <label for="restoreFile">Restore complete config from backup</label>
+                    <input id="restoreFile" type="file" accept="application/json,.json">
+                </div>
+                <button id="restoreBtn" class="danger" type="button">Restore uploaded config</button>
+            </div>
+        </div>
+        <div id="patterns"></div>
+        <div id="defaultContainer"></div>
+
+        <div class="footer-actions">
+            <div class="actions">
+                <button id="saveBtn" type="button">Save configuration</button>
+                <button id="saveRestartBtn" type="button">Save &amp; restart HBlink4</button>
+                <button id="restartBtn" class="danger" type="button">Restart HBlink4</button>
+                <span id="restartHint" class="subtle"></span>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+    const MAX_TG = 16777215;
+    const state = {
+        csrf: null,
+        data: null,
+        restartEnabled: false,
+        backupReady: false,
+        busy: false
+    };
+
+    const $ = id => document.getElementById(id);
+
+    function showMessage(text, kind = 'info') {
+        const el = $('message');
+        el.textContent = text;
+        el.className = `message ${kind}`;
+    }
+
+    function clearMessage() {
+        const el = $('message');
+        el.textContent = '';
+        el.className = 'message';
+    }
+
+    async function api(url, options = {}) {
+        const response = await fetch(url, options);
+        let body = {};
+        try { body = await response.json(); } catch (_) {}
+        if (!response.ok) {
+            const error = new Error(body.detail || `Request failed (${response.status})`);
+            error.status = response.status;
+            throw error;
+        }
+        return body;
+    }
+
+    function setBusy(busy) {
+        state.busy = busy;
+        ['saveBtn', 'saveRestartBtn', 'restartBtn', 'restoreBtn', 'logoutBtn'].forEach(id => {
+            const el = $(id);
+            if (el) el.disabled = busy || (id === 'restartBtn' && !state.restartEnabled) || (id === 'saveRestartBtn' && !state.restartEnabled);
+        });
+        ['requiredBackupBtn', 'downloadAgainBtn'].forEach(id => {
+            const el = $(id);
+            if (el) el.disabled = busy;
+        });
+    }
+
+    function formatMatch(match) {
+        if (!match || typeof match !== 'object') return 'No match details';
+        const parts = [];
+        if (Array.isArray(match.ids) && match.ids.length) parts.push(`IDs: ${match.ids.join(', ')}`);
+        if (Array.isArray(match.id_ranges) && match.id_ranges.length) {
+            parts.push(`Ranges: ${match.id_ranges.map(r => Array.isArray(r) ? r.join('–') : String(r)).join(', ')}`);
+        }
+        if (Array.isArray(match.callsigns) && match.callsigns.length) parts.push(`Callsigns: ${match.callsigns.join(', ')}`);
+        return parts.join(' | ') || 'No match details';
+    }
+
+    function parseTalkgroups(text) {
+        const values = text.trim().split(/[\s,;]+/).filter(Boolean);
+        if (!values.length) throw new Error('Enter at least one talkgroup ID');
+        return values.map(token => {
+            if (!/^\d+$/.test(token)) throw new Error(`Invalid talkgroup: ${token}`);
+            const tg = Number(token);
+            if (!Number.isSafeInteger(tg) || tg < 1 || tg > MAX_TG) {
+                throw new Error(`Talkgroup ${token} must be between 1 and ${MAX_TG}`);
+            }
+            return tg;
+        });
+    }
+
+    function createSlotEditor(title, currentValue) {
+        const root = document.createElement('div');
+        root.className = 'slot-editor';
+        root._talkgroups = Array.isArray(currentValue) ? [...new Set(currentValue)] : [];
+
+        const label = document.createElement('label');
+        label.textContent = title;
+        root.appendChild(label);
+
+        const mode = document.createElement('select');
+        mode.innerHTML = '<option value="all">Allow all talkgroups</option><option value="deny">Deny all talkgroups</option><option value="specific">Specific talkgroups</option>';
+        mode.value = currentValue === null ? 'all' : (Array.isArray(currentValue) && currentValue.length === 0 ? 'deny' : 'specific');
+        root.appendChild(mode);
+
+        const specific = document.createElement('div');
+        const chips = document.createElement('div');
+        chips.className = 'chips';
+        specific.appendChild(chips);
+
+        const entry = document.createElement('div');
+        entry.className = 'tg-entry';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.placeholder = 'Add TGs, e.g. 91, 505, 50501';
+        input.setAttribute('aria-label', `${title} new talkgroups`);
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.textContent = 'Add';
+        entry.append(input, add);
+        specific.appendChild(entry);
+        root.appendChild(specific);
+
+        function renderChips() {
+            chips.replaceChildren();
+            if (!root._talkgroups.length) {
+                const empty = document.createElement('div');
+                empty.className = 'empty-note';
+                empty.textContent = 'No talkgroups yet. Add one or more IDs above.';
+                chips.appendChild(empty);
+                return;
+            }
+            for (const tg of root._talkgroups) {
+                const chip = document.createElement('span');
+                chip.className = 'chip';
+                chip.append(document.createTextNode(String(tg)));
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.title = `Remove TG ${tg}`;
+                remove.setAttribute('aria-label', `Remove TG ${tg}`);
+                remove.textContent = '×';
+                remove.addEventListener('click', () => {
+                    root._talkgroups = root._talkgroups.filter(value => value !== tg);
+                    renderChips();
+                });
+                chip.appendChild(remove);
+                chips.appendChild(chip);
+            }
+        }
+
+        function updateMode() {
+            specific.classList.toggle('hidden', mode.value !== 'specific');
+        }
+
+        function addValues() {
+            try {
+                const values = parseTalkgroups(input.value);
+                for (const tg of values) {
+                    if (!root._talkgroups.includes(tg)) root._talkgroups.push(tg);
+                }
+                input.value = '';
+                renderChips();
+                clearMessage();
+            } catch (error) {
+                showMessage(error.message, 'error');
+            }
+        }
+
+        add.addEventListener('click', addValues);
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addValues();
+            }
+        });
+        mode.addEventListener('change', updateMode);
+
+        root.getValue = () => {
+            if (mode.value === 'all') return null;
+            if (mode.value === 'deny') return [];
+            return [...root._talkgroups];
+        };
+
+        renderChips();
+        updateMode();
+        return root;
+    }
+
+    function createConfigCard(item, isDefault = false) {
+        const card = document.createElement('section');
+        card.className = 'card';
+        if (!isDefault) card.dataset.index = item.index;
+
+        const heading = document.createElement('div');
+        heading.className = 'pattern-title';
+        const titleBlock = document.createElement('div');
+        const h3 = document.createElement('h3');
+        h3.textContent = isDefault ? 'Default repeater configuration' : item.name;
+        titleBlock.appendChild(h3);
+
+        if (!isDefault && item.description) {
+            const description = document.createElement('div');
+            description.className = 'subtle';
+            description.textContent = item.description;
+            titleBlock.appendChild(description);
+        }
+        if (!isDefault) {
+            const match = document.createElement('div');
+            match.className = 'match';
+            match.style.marginTop = '6px';
+            match.textContent = formatMatch(item.match);
+            titleBlock.appendChild(match);
+        }
+        heading.appendChild(titleBlock);
+
+        if (!isDefault && item.trust) {
+            const trust = document.createElement('span');
+            trust.className = 'trust';
+            trust.textContent = 'Trusted pattern';
+            heading.appendChild(trust);
+        }
+        card.appendChild(heading);
+
+        const slots = document.createElement('div');
+        slots.className = 'slots';
+        const slot1 = createSlotEditor('Timeslot 1', item.slot1_talkgroups);
+        const slot2 = createSlotEditor('Timeslot 2', item.slot2_talkgroups);
+        slots.append(slot1, slot2);
+        card.appendChild(slots);
+        card._slot1 = slot1;
+        card._slot2 = slot2;
+        return card;
+    }
+
+    function renderEditor() {
+        const patterns = $('patterns');
+        patterns.replaceChildren();
+        for (const item of state.data.patterns || []) patterns.appendChild(createConfigCard(item));
+
+        const defaultContainer = $('defaultContainer');
+        defaultContainer.replaceChildren();
+        if (state.data.default !== null) {
+            defaultContainer.appendChild(createConfigCard(state.data.default, true));
+        }
+    }
+
+    function collectPayload() {
+        const patterns = [...$('patterns').children].map(card => ({
+            index: Number(card.dataset.index),
+            slot1_talkgroups: card._slot1.getValue(),
+            slot2_talkgroups: card._slot2.getValue()
+        }));
+        const defaultCard = $('defaultContainer').firstElementChild;
+        const defaultValue = defaultCard ? {
+            slot1_talkgroups: defaultCard._slot1.getValue(),
+            slot2_talkgroups: defaultCard._slot2.getValue()
+        } : null;
+        return { revision: state.data.revision, patterns, default: defaultValue };
+    }
+
+    async function loadEditor() {
+        state.data = await api('/api/admin/talkgroups');
+        renderEditor();
+        state.backupReady = true;
+        $('editorPanel').classList.remove('hidden');
+        $('backupPanel').classList.add('hidden');
+        $('loginPanel').classList.add('hidden');
+        $('setupPanel').classList.add('hidden');
+        $('logoutBtn').classList.remove('hidden');
+    }
+
+    async function refreshStatus() {
+        const status = await api('/api/admin/status');
+        state.restartEnabled = status.restart_enabled;
+        $('restartHint').textContent = status.restart_enabled ? '' : 'Restart is disabled until the local systemd permission is configured.';
+
+        if (!status.enabled || !status.configured) {
+            $('setupPanel').classList.remove('hidden');
+            $('loginPanel').classList.add('hidden');
+            $('backupPanel').classList.add('hidden');
+            $('editorPanel').classList.add('hidden');
+            return;
+        }
+        if (!status.authenticated) {
+            state.backupReady = false;
+            $('loginPanel').classList.remove('hidden');
+            $('setupPanel').classList.add('hidden');
+            $('backupPanel').classList.add('hidden');
+            $('editorPanel').classList.add('hidden');
+            $('logoutBtn').classList.add('hidden');
+            return;
+        }
+        state.csrf = status.csrf_token;
+        $('logoutBtn').classList.remove('hidden');
+        if (!status.config_backup_ready) {
+            state.backupReady = false;
+            $('backupPanel').classList.remove('hidden');
+            $('editorPanel').classList.add('hidden');
+            $('loginPanel').classList.add('hidden');
+            $('setupPanel').classList.add('hidden');
+            $('backupHint').textContent = 'The editor is locked until the backup is downloaded successfully.';
+            setBusy(false);
+            return;
+        }
+        await loadEditor();
+        setBusy(false);
+    }
+
+    function downloadFilename(response) {
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        return match && match[1] ? match[1] : 'hblink4-config-backup.json';
+    }
+
+    async function downloadConfigBackup({ unlockEditor = false } = {}) {
+        $('backupHint').textContent = 'Downloading complete configuration…';
+        const response = await fetch('/api/admin/config-backup', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store'
+        });
+        if (!response.ok) {
+            let detail = '';
+            try {
+                const body = await response.json();
+                detail = body.detail || '';
+            } catch (_) {}
+            const error = new Error(detail || `Backup download failed (${response.status})`);
+            error.status = response.status;
+            throw error;
+        }
+
+        const revision = response.headers.get('X-HBlink4-Config-Revision');
+        if (!revision) throw new Error('Backup response did not include its configuration revision');
+
+        const blob = await response.blob();
+        if (!blob.size) throw new Error('Backup download returned an empty file');
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = downloadFilename(response);
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+        if (unlockEditor) {
+            await api('/api/admin/config-backup-confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+                body: JSON.stringify({ revision })
+            });
+            await loadEditor();
+            showMessage('Safety backup downloaded. Configuration editing is now unlocked.', 'success');
+        } else {
+            showMessage('Complete HBlink4 configuration backup downloaded.', 'success');
+        }
+    }
+
+    async function restoreConfiguration() {
+        const file = $('restoreFile').files[0];
+        if (!file) throw new Error('Choose an HBlink4 JSON backup file to restore');
+        if (file.size > 2 * 1024 * 1024) throw new Error('Config backup exceeds the 2 MiB upload limit');
+        const raw = await file.text();
+        try { JSON.parse(raw); } catch (_) { throw new Error('Selected file is not valid JSON'); }
+        if (!window.confirm('Restore this complete HBlink4 configuration? This replaces the live config. The safety backup you downloaded remains your rollback copy.')) return;
+
+        const result = await api('/api/admin/config-restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+            body: raw
+        });
+        state.data = result.configuration;
+        renderEditor();
+        $('restoreFile').value = '';
+        showMessage('Complete HBlink4 configuration restored. Restart HBlink4 to apply it.', 'success');
+    }
+
+    async function saveConfiguration() {
+        const result = await api('/api/admin/talkgroups', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+            body: JSON.stringify(collectPayload())
+        });
+        state.data = result.configuration;
+        renderEditor();
+        showMessage('Configuration saved. Restart HBlink4 to apply the new talkgroup lists.', 'success');
+        return result;
+    }
+
+    async function restartHBlink() {
+        if (!state.restartEnabled) throw new Error('HBlink4 restart is disabled in dashboard configuration');
+        showMessage('Restarting HBlink4 and checking that the service returns active…', 'info');
+        const result = await api('/api/admin/restart', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': state.csrf }
+        });
+        showMessage(`HBlink4 restarted successfully (${result.status}).`, 'success');
+    }
+
+    async function withBusy(action) {
+        if (state.busy) return;
+        setBusy(true);
+        try {
+            await action();
+        } catch (error) {
+            if (error.status === 401) {
+                state.csrf = null;
+                showMessage('Your administrator session expired. Log in again.', 'error');
+                await refreshStatus();
+            } else {
+                showMessage(error.message, 'error');
+            }
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    $('requiredBackupBtn').addEventListener('click', () => withBusy(() => downloadConfigBackup({ unlockEditor: true })));
+    $('downloadAgainBtn').addEventListener('click', () => withBusy(() => downloadConfigBackup()));
+    $('restoreBtn').addEventListener('click', () => withBusy(restoreConfiguration));
+
+    $('loginForm').addEventListener('submit', event => {
+        event.preventDefault();
+        withBusy(async () => {
+            const result = await api('/api/admin/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: $('username').value, password: $('password').value })
+            });
+            state.csrf = result.csrf_token;
+            $('password').value = '';
+            clearMessage();
+            await refreshStatus();
+        });
+    });
+
+    $('saveBtn').addEventListener('click', () => withBusy(saveConfiguration));
+    $('saveRestartBtn').addEventListener('click', () => withBusy(async () => {
+        await saveConfiguration();
+        await restartHBlink();
+    }));
+    $('restartBtn').addEventListener('click', () => withBusy(restartHBlink));
+    $('logoutBtn').addEventListener('click', () => withBusy(async () => {
+        await api('/api/admin/logout', { method: 'POST', headers: { 'X-CSRF-Token': state.csrf } });
+        state.csrf = null;
+        state.data = null;
+        state.backupReady = false;
+        clearMessage();
+        await refreshStatus();
+    }));
+
+    refreshStatus().catch(error => showMessage(error.message, 'error'));
+</script>
+</body>
+</html>
