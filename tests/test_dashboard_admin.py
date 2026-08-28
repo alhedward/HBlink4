@@ -291,6 +291,35 @@ def test_admin_api_login_requires_session_and_csrf_for_save(tmp_path, monkeypatc
     )
     assert "attachment;" in backup_response.headers["content-disposition"]
     assert b"do-not-leak-or-change" in backup_response.body
+    backup_revision = backup_response.headers["x-hblink4-config-revision"]
+
+    # Starting/receiving the backup response alone does not unlock editing.
+    with pytest.raises(HTTPException) as not_confirmed:
+        asyncio.run(
+            server.admin_get_talkgroups(_request("/api/admin/talkgroups", cookie=cookie_header))
+        )
+    assert not_confirmed.value.status_code == 428
+
+    with pytest.raises(HTTPException) as confirm_missing_csrf:
+        asyncio.run(
+            server.admin_confirm_config_backup(
+                _request("/api/admin/config-backup-confirm", cookie=cookie_header),
+                {"revision": backup_revision},
+            )
+        )
+    assert confirm_missing_csrf.value.status_code == 403
+
+    confirm_result = asyncio.run(
+        server.admin_confirm_config_backup(
+            _request(
+                "/api/admin/config-backup-confirm",
+                cookie=cookie_header,
+                csrf=csrf,
+            ),
+            {"revision": backup_revision},
+        )
+    )
+    assert confirm_result == {"ok": True, "revision": backup_revision}
 
     editor_data = asyncio.run(
         server.admin_get_talkgroups(_request("/api/admin/talkgroups", cookie=cookie_header))

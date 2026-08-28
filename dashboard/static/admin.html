@@ -116,10 +116,10 @@
         <h2>Backup required before configuration changes</h2>
         <div class="backup-warning">
             <p><strong>Download the current complete HBlink4 config before editing or restoring anything.</strong></p>
-            <p class="subtle">This backup includes repeater passphrases and other sensitive settings. Store it securely. The editor remains locked until this download has been requested for the current login session.</p>
+            <p class="subtle">This backup includes repeater passphrases and other sensitive settings. Store it securely. The editor remains locked until the complete JSON backup has been received by your browser and the download has been triggered.</p>
         </div>
         <div class="actions" style="margin-top: 16px;">
-            <a id="requiredBackupBtn" class="button-link" href="/api/admin/config-backup" download>Download current config backup</a>
+            <button id="requiredBackupBtn" type="button">Download current config backup</button>
             <span id="backupHint" class="subtle"></span>
         </div>
     </section>
@@ -136,7 +136,7 @@
             <strong>Full configuration backup &amp; restore</strong>
             <p class="subtle">Download another complete backup at any time, or restore a previously downloaded HBlink4 config after a rebuild. Restoring replaces the complete config and requires an HBlink4 restart.</p>
             <div class="actions">
-                <a id="downloadAgainBtn" class="button-link secondary" href="/api/admin/config-backup" download>Download current config</a>
+                <button id="downloadAgainBtn" class="secondary" type="button">Download current config</button>
             </div>
             <div class="file-row">
                 <div>
@@ -204,10 +204,7 @@
         });
         ['requiredBackupBtn', 'downloadAgainBtn'].forEach(id => {
             const el = $(id);
-            if (el) {
-                el.style.pointerEvents = busy ? 'none' : '';
-                el.style.opacity = busy ? '0.5' : '';
-            }
+            if (el) el.disabled = busy;
         });
     }
 
@@ -445,17 +442,7 @@
             $('editorPanel').classList.add('hidden');
             $('loginPanel').classList.add('hidden');
             $('setupPanel').classList.add('hidden');
-            $('backupHint').textContent = status.config_backup_downloaded
-                ? 'Backup request received; verifying the downloaded revision…'
-                : 'The editor is locked until the backup is downloaded.';
-            if (status.config_backup_downloaded) {
-                try {
-                    await loadEditor();
-                } catch (error) {
-                    if (error.status !== 428) throw error;
-                    $('backupHint').textContent = error.message;
-                }
-            }
+            $('backupHint').textContent = 'The editor is locked until the backup is downloaded successfully.';
             setBusy(false);
             return;
         }
@@ -463,31 +450,57 @@
         setBusy(false);
     }
 
-    async function waitForBackupUnlock() {
-        $('backupHint').textContent = 'Download started; unlocking editor…';
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-            await new Promise(resolve => setTimeout(resolve, 250));
-            const status = await api('/api/admin/status');
-            if (status.config_backup_downloaded) {
-                state.csrf = status.csrf_token;
-                try {
-                    await loadEditor();
-                    showMessage('Safety backup downloaded. Configuration editing is now unlocked.', 'success');
-                    return;
-                } catch (error) {
-                    if (error.status === 428) {
-                        $('backupHint').textContent = error.message;
-                        return;
-                    }
-                    throw error;
-                }
-            }
-        }
-        $('backupHint').textContent = 'The backup request was not confirmed. Try the download again.';
+    function downloadFilename(response) {
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        return match && match[1] ? match[1] : 'hblink4-config-backup.json';
     }
 
-    function backupLinkClicked() {
-        setTimeout(() => withBusy(waitForBackupUnlock), 100);
+    async function downloadConfigBackup({ unlockEditor = false } = {}) {
+        $('backupHint').textContent = 'Downloading complete configuration…';
+        const response = await fetch('/api/admin/config-backup', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store'
+        });
+        if (!response.ok) {
+            let detail = '';
+            try {
+                const body = await response.json();
+                detail = body.detail || '';
+            } catch (_) {}
+            const error = new Error(detail || `Backup download failed (${response.status})`);
+            error.status = response.status;
+            throw error;
+        }
+
+        const revision = response.headers.get('X-HBlink4-Config-Revision');
+        if (!revision) throw new Error('Backup response did not include its configuration revision');
+
+        const blob = await response.blob();
+        if (!blob.size) throw new Error('Backup download returned an empty file');
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = downloadFilename(response);
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+        if (unlockEditor) {
+            await api('/api/admin/config-backup-confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+                body: JSON.stringify({ revision })
+            });
+            await loadEditor();
+            showMessage('Safety backup downloaded. Configuration editing is now unlocked.', 'success');
+        } else {
+            showMessage('Complete HBlink4 configuration backup downloaded.', 'success');
+        }
     }
 
     async function restoreConfiguration() {
@@ -549,8 +562,8 @@
         }
     }
 
-    $('requiredBackupBtn').addEventListener('click', backupLinkClicked);
-    $('downloadAgainBtn').addEventListener('click', backupLinkClicked);
+    $('requiredBackupBtn').addEventListener('click', () => withBusy(() => downloadConfigBackup({ unlockEditor: true })));
+    $('downloadAgainBtn').addEventListener('click', () => withBusy(() => downloadConfigBackup()));
     $('restoreBtn').addEventListener('click', () => withBusy(restoreConfiguration));
 
     $('loginForm').addEventListener('submit', event => {

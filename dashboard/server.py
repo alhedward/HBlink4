@@ -1122,11 +1122,14 @@ async def admin_download_config_backup(request: Request):
     except TalkgroupConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    session.config_backup_revision = revision
-    session.config_backup_confirmed = False
+    # Do not mutate/unlock the editing gate merely because the server started
+    # a response. The browser confirms the revision in a separate
+    # CSRF-protected request only after it has received the complete backup body
+    # and triggered the local download. This also means an optional extra backup
+    # while editing does not unexpectedly re-lock the current session.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     filename = f"hblink4-config-{timestamp}.json"
-    logger.info("Dashboard admin %s downloaded a full HBlink4 config backup", session.username)
+    logger.info("Dashboard admin %s requested a full HBlink4 config backup", session.username)
     return Response(
         content=raw,
         media_type="application/json",
@@ -1134,16 +1137,44 @@ async def admin_download_config_backup(request: Request):
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
             "Pragma": "no-cache",
+            "X-HBlink4-Config-Revision": revision,
         },
     )
+
+
+@app.post("/api/admin/config-backup-confirm")
+async def admin_confirm_config_backup(request: Request, payload: dict = Body(...)):
+    """Unlock editing after the browser has received the complete backup bytes."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    revision = payload.get("revision")
+    if not isinstance(revision, str) or not revision:
+        raise HTTPException(status_code=400, detail="Backup revision is required")
+
+    try:
+        current = _talkgroup_store().load_for_editor()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if current["revision"] != revision:
+        session.config_backup_revision = None
+        session.config_backup_confirmed = False
+        raise HTTPException(
+            status_code=428,
+            detail="HBlink4 config changed during the backup download; download a fresh backup before editing",
+        )
+
+    session.config_backup_revision = revision
+    session.config_backup_confirmed = True
+    logger.info("Dashboard admin %s confirmed receipt of the full HBlink4 config backup", session.username)
+    return {"ok": True, "revision": revision}
 
 
 @app.get("/api/admin/talkgroups")
 async def admin_get_talkgroups(request: Request):
     """Return editable ACLs only after the current config has been downloaded."""
     session = _admin_session(request)
-    if not session.config_backup_revision:
-        _require_config_backup(session)
+    _require_config_backup(session)
     try:
         result = _talkgroup_store().load_for_editor()
     except TalkgroupConfigError as exc:
@@ -1156,7 +1187,6 @@ async def admin_get_talkgroups(request: Request):
             status_code=428,
             detail="HBlink4 config changed after the backup download; download a fresh backup before editing",
         )
-    session.config_backup_confirmed = True
     return result
 
 
