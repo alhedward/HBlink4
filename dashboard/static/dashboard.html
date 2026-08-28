@@ -10,9 +10,10 @@
         body { 
             font-family: system-ui, -apple-system, sans-serif; 
             background: #0f172a; 
-            color: #e2e8f0; 
+            color: #e2e8f0;
             padding: 12px;
-        
+        }
+
         .container { max-width: 1600px; margin: 0 auto; }
         
         header { 
@@ -33,7 +34,7 @@
             width: auto;
         }
         
-        h1 { color: #38bdf8; font-size: 32px; }
+        h1 { color: #38bdf8; font-size: 30px; }
         
         .status-badges {
             display: flex;
@@ -44,7 +45,7 @@
         .audio-toggle {
             padding: 8px 16px;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 500;
             cursor: pointer;
             user-select: none;
@@ -72,7 +73,7 @@
         .network-info-btn {
             padding: 8px 16px;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 500;
             cursor: pointer;
             user-select: none;
@@ -130,14 +131,14 @@
         .modal-header h2 {
             margin: 0;
             color: #38bdf8;
-            font-size: 24px;
+            font-size: 22px;
         }
         
         .modal-close {
             background: #374151;
             border: none;
             color: #e2e8f0;
-            font-size: 28px;
+            font-size: 26px;
             cursor: pointer;
             width: 36px;
             height: 36px;
@@ -167,7 +168,7 @@
         
         .modal-section h3 {
             color: #94a3b8;
-            font-size: 14px;
+            font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin: 0 0 12px 0;
@@ -235,7 +236,7 @@
         .connection-status {
             padding: 8px 16px;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 500;
             transition: all 0.2s ease;
             user-select: none;
@@ -271,7 +272,7 @@
             margin-bottom: 20px;
             box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
             border: 2px solid #fbbf24;
-            font-size: 15px;
+            font-size: 13px;
             line-height: 1.6;
             font-weight: 500;
         }
@@ -284,17 +285,19 @@
         
         .stats-bar {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            /* Fixed-width tracks: all pills equal, sized to fit the longest
+               label ("Retransmitted Calls Today"), no stretching to fill. */
+            grid-template-columns: repeat(auto-fit, 170px);
             gap: 10px;
             margin-bottom: 15px;
         }
-        
+
         .stat-card {
             background: #1e293b;
             padding: 8px 12px;
             border-radius: 6px;
-        }        .stat-label { color: #94a3b8; font-size: 12px; margin-bottom: 5px; }
-        .stat-value { color: #e2e8f0; font-size: 24px; font-weight: 600; }
+        }        .stat-label { color: #94a3b8; font-size: 10px; margin-bottom: 5px; white-space: nowrap; }
+        .stat-value { color: #e2e8f0; font-size: 20px; font-weight: 600; }
         
         .card { 
             background: #1e293b; 
@@ -306,7 +309,7 @@
         
         .card h2 { 
             color: #94a3b8; 
-            font-size: 16px; 
+            font-size: 14px; 
             margin-bottom: 12px; 
             text-transform: uppercase; 
             letter-spacing: 0.5px;
@@ -315,12 +318,32 @@
         
         .section-header {
             color: #94a3b8;
-            font-size: 16px;
+            font-size: 14px;
             margin-bottom: 12px;
             margin-top: 20px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             font-weight: 600;
+        }
+
+        /* Collapsible section headers (caret toggles the section body) */
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+        .collapse-caret {
+            display: inline-block;
+            width: 0.9em;
+            margin-right: 3px;
+            font-size: 1.2em;
+            color: #64748b;
+            transition: transform 0.15s ease;
+        }
+        .collapsible:hover .collapse-caret {
+            color: #38bdf8;
+        }
+        .collapsed .collapse-caret {
+            transform: rotate(-90deg);
         }
         
         /* Repeater Card Layout - Compact Version */
@@ -347,7 +370,7 @@
         }
         
         .repeater-header {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             color: #38bdf8;
             margin-bottom: 4px;
@@ -355,7 +378,7 @@
         
         .repeater-location {
             color: #94a3b8;
-            font-size: 14px;
+            font-size: 12px;
             margin-bottom: 12px;
         }
         
@@ -364,7 +387,7 @@
                 grid-template-columns: 140px auto 1fr;
                 grid-template-rows: auto auto;
                 gap: 2px 10px;
-                font-size: 0.85em;
+                font-size: 0.72em;
                 margin-top: 2px;
             }
         
@@ -418,7 +441,7 @@
             grid-template-columns: 55px 70px 75px 110px 55px 70px; /* Fixed optimal widths with padding */
             gap: 10px;
             align-items: center;
-            font-size: 12px;
+            font-size: 11px;
             min-width: 0; /* Allow grid items to shrink */
             width: max-content; /* Shrink to fit content */
         }
@@ -450,7 +473,7 @@
         
         .slot-col-label {
             color: #64748b;
-            font-size: 9px;
+            font-size: 8px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -474,7 +497,7 @@
         .slot-status-badge {
             padding: 2px 6px;
             border-radius: 6px;
-            font-size: 8px;
+            font-size: 7px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -505,9 +528,34 @@
             background: #fbbf24;   /* gold */
             color: #1e293b;
         }
-        
+
+        /* OpenBridge active-stream pills — flow left→right, wrap as a group */
+        .obp-streams {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .obp-stream-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #0f213b;
+            border: 1px solid #334155;
+            border-radius: 999px;
+            padding: 3px 10px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .obp-stream-pill.hang_time {
+            opacity: 0.75;
+        }
+        .obp-stream-pill.idle {
+            color: #64748b;
+        }
+
         .repeater-header-warning {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             margin-bottom: 4px;
             color: #fbbf24; /* Yellow warning color */
@@ -515,7 +563,7 @@
         
         .slot-talker {
             color: #94a3b8;
-            font-size: 11px;
+            font-size: 10px;
             font-style: italic;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -526,7 +574,7 @@
             display: inline-block; 
             padding: 4px 12px; 
             border-radius: 12px; 
-            font-size: 11px; 
+            font-size: 9px; 
             font-weight: 600; 
             text-transform: uppercase;
         }
@@ -541,12 +589,12 @@
             margin-bottom: 8px; 
             background: #334155; 
             border-radius: 4px; 
-            font-size: 13px; 
+            font-size: 11px; 
         }
         
         .event .time { 
             color: #64748b; 
-            font-size: 11px; 
+            font-size: 9px; 
             margin-bottom: 4px;
         }
         
@@ -555,7 +603,7 @@
             background: #475569;
             padding: 2px 8px;
             border-radius: 4px;
-            font-size: 10px;
+            font-size: 8px;
             font-weight: 600;
             text-transform: uppercase;
             margin-right: 8px;
@@ -570,7 +618,7 @@
         
         .tg-list { 
             color: #64748b; 
-            font-size: 12px; 
+            font-size: 10px; 
         }
         
         /* Responsive Design for Mobile/Tablet */
@@ -600,7 +648,7 @@
             }
             
             .repeater-header {
-                font-size: 14px;
+                font-size: 12px;
                 margin-bottom: 4px;
             }
             
@@ -608,7 +656,7 @@
             .slot {
                 grid-template-columns: 50px 65px 70px 100px 50px 65px;
                 gap: 8px;
-                font-size: 12px;
+                font-size: 11px;
                 width: 100%; /* Take full width on mobile */
             }
         }
@@ -634,7 +682,7 @@
             .slot {
                 grid-template-columns: 52px 68px 72px 105px 52px 68px;
                 gap: 8px;
-                font-size: 12px;
+                font-size: 11px;
                 width: 100%; /* Take full width on tablet */
             }
             
@@ -660,7 +708,7 @@
             }
             
             h1 {
-                font-size: 24px;
+                font-size: 22px;
             }
             
             .logo {
@@ -677,24 +725,24 @@
             }
             
             .stat-value {
-                font-size: 20px;
+                font-size: 16px;
             }
             
             /* Even more compact slot display - 5 columns */
             .slot {
                 grid-template-columns: 45px 60px 65px 95px 55px;
                 gap: 6px;
-                font-size: 11px;
+                font-size: 10px;
                 padding: 6px 8px;
                 width: 100%; /* Take full width */
             }
             
             .slot-col-label {
-                font-size: 9px;
+                font-size: 8px;
             }
             
             .slot-col-value {
-                font-size: 11px;
+                font-size: 10px;
             }
             
             .repeater-info {
@@ -707,7 +755,7 @@
             .slot {
                 grid-template-columns: 42px 58px 62px 55px;
                 gap: 4px;
-                font-size: 10px;
+                font-size: 9px;
                 padding: 6px;
                 width: 100%; /* Take full width */
             }
@@ -723,7 +771,7 @@
             }
             
             .section-header {
-                font-size: 14px;
+                font-size: 12px;
             }
         }
         
@@ -734,21 +782,21 @@
         .status-disconnected { color: #94a3b8; font-weight: 600; }
         
         .outbound-header-connected {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             color: #38bdf8;
             margin-bottom: 4px;
         }
         
         .outbound-header-warning {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             margin-bottom: 4px;
             color: #fbbf24;
         }
         
         .outbound-header-disconnected {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             margin-bottom: 4px;
             color: #475569;  /* Dark blue/gray for disconnected/connecting */
@@ -762,7 +810,7 @@
                 <img src="/static/HBlink.png" alt="HBlink" class="logo">
                 <div>
                     <h1 id="dashboardTitle">HBlink4 Dashboard</h1>
-                    <div style="color: #64748b; font-size: 14px; margin-top: 4px;" id="serverName"></div>
+                    <div style="color: #64748b; font-size: 12px; margin-top: 4px;" id="serverName"></div>
                 </div>
             </div>
             <div class="status-badges">
@@ -803,12 +851,12 @@
             </div>
         </div>
         
-        <!-- Last Heard Users (Last 10) -->
-        <h2 class="section-header" style="margin-top: 20px; margin-bottom: 10px;">
-            Last Heard
+        <!-- Last Heard / Active Streams (collapsible: minimized filters to active calls) -->
+        <h2 class="section-header collapsible" id="lastHeardHeader" data-section="lastHeard" style="margin-top: 20px; margin-bottom: 10px;">
+            <span class="collapse-caret">▾</span><span id="lastHeardTitle">Last Heard</span>
             <span id="userDbStatus" style="font-size: 0.55em; color: #9ca3af; font-weight: 400; margin-left: 10px;"></span>
         </h2>
-        <div class="card">
+        <div class="card" id="lastHeardBody">
             <div style="overflow-x: auto;">
                 <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
                     <thead>
@@ -823,7 +871,7 @@
                     </thead>
                     <tbody id="lastHeardTable">
                         <tr>
-                            <td colspan="6" style="padding: 20px; text-align: center; color: #9ca3af;">
+                            <td colspan="6" style="padding: 8px 20px; text-align: center; color: #9ca3af;">
                                 No users heard yet
                             </td>
                         </tr>
@@ -831,50 +879,61 @@
                 </table>
             </div>
         </div>
-        
+
+        <!-- OpenBridge Trunks (positioned above Repeaters) -->
+        <div id="openbridgeSection" style="display: none;">
+            <h2 class="section-header collapsible" data-section="openbridge" data-collapse-target="openbridgeBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>↔️ OpenBridge <span id="openbridgeCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="openbridgeBody">
+                <div id="openbridgesContainer"></div>
+            </div>
+        </div>
+
         <!-- Repeaters Section -->
         <div id="repeatersSection" style="display: none;">
-            <h2 class="section-header">📶 Repeaters <span id="repeaterCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
-            <div class="card">
+            <h2 class="section-header collapsible" data-section="repeaters" data-collapse-target="repeatersBody"><span class="collapse-caret">▾</span>📶 Repeaters <span id="repeaterCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="repeatersBody">
                 <div id="repeatersContainer"></div>
             </div>
         </div>
-        
+
         <!-- Hotspots Section -->
         <div id="hotspotsSection" style="display: none;">
-            <h2 class="section-header" style="margin-top: 20px;">📱 Hotspots <span id="hotspotCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
-            <div class="card">
+            <h2 class="section-header collapsible" data-section="hotspots" data-collapse-target="hotspotsBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>📱 Hotspots <span id="hotspotCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="hotspotsBody">
                 <div id="hotspotsContainer"></div>
             </div>
         </div>
-        
+
         <!-- Network Inbound Section -->
         <div id="networksSection" style="display: none;">
-            <h2 class="section-header" style="margin-top: 20px;">🔗 Network Inbound <span id="networkCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
-            <div class="card">
+            <h2 class="section-header collapsible" data-section="networks" data-collapse-target="networksBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>🔗 Network Inbound <span id="networkCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="networksBody">
                 <div id="networksContainer"></div>
             </div>
         </div>
-        
+
         <!-- Unknown Connections Section (fallback for unrecognized software) -->
         <div id="unknownSection" style="display: none;">
-            <h2 class="section-header" style="margin-top: 20px;">❓ Other Connections <span id="unknownCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
-            <div class="card">
+            <h2 class="section-header collapsible" data-section="unknown" data-collapse-target="unknownBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>❓ Other Connections <span id="unknownCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="unknownBody">
                 <div id="unknownContainer"></div>
             </div>
         </div>
-        
+
         <!-- Network Outbound -->
         <div id="outboundSection" style="display: none;">
-            <h2 class="section-header" style="margin-top: 20px;">🔗 Network Outbound <span id="outboundCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
-            <div class="card">
+            <h2 class="section-header collapsible" data-section="outbound" data-collapse-target="outboundBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>🔗 Network Outbound <span id="outboundCount" style="color: #38bdf8; font-weight: 700;"></span></h2>
+            <div class="card" id="outboundBody">
                 <div id="outboundsContainer"></div>
             </div>
         </div>
-        
-        <div class="card" style="margin-top: 15px;">
-            <h2>Recent Events</h2>
-            <div id="eventsLog"></div>
+
+        <!-- Recent Events -->
+        <div id="eventsSection">
+            <h2 class="section-header collapsible" data-section="events" data-collapse-target="eventsBody" style="margin-top: 20px;"><span class="collapse-caret">▾</span>Recent Events</h2>
+            <div class="card" id="eventsBody">
+                <div id="eventsLog"></div>
+            </div>
         </div>
     </div>
     
@@ -913,6 +972,8 @@
                     const outboundList = Array.isArray(state.outbounds)
                         ? state.outbounds : Object.values(state.outbounds || {});
                     updateOutbounds(outboundList);
+                } else if (connectionType === 'openbridge') {
+                    updateOpenbridges(state.openbridges);
                 } else if (state.repeaters) {
                     updateRepeaters(state.repeaters);
                 }
@@ -924,6 +985,7 @@
             repeaters: [],
             repeater_details: {},  // Detailed info for each repeater
             outbounds: [],  // Outbound connections
+            openbridges: [],  // OpenBridge trunks
             streams: [],
             events: [],
             last_heard: [],
@@ -1079,6 +1141,7 @@
                 if (data.type === 'initial_state') {
                     state.repeaters = data.data.repeaters;
                     state.outbounds = data.data.outbounds || [];
+                    state.openbridges = data.data.openbridges || [];
                     state.streams = data.data.streams;
                     state.events = data.data.events;
                     state.stats = data.data.stats;
@@ -1090,6 +1153,7 @@
 
                     updateRepeaters(state.repeaters);
                     updateOutbounds(state.outbounds);
+                    updateOpenbridges(state.openbridges);
                     updateStreams(state.streams);
                     updateEvents(state.events);
                     updateStats(state.stats, state.repeaters, state.streams);
@@ -1389,23 +1453,14 @@
                 state.repeaters = {};
                 state.streams = [];
                 
-                // Clear repeaters display
-                const repeatersList = document.getElementById('repeatersList');
-                if (repeatersList) {
-                    repeatersList.innerHTML = '<div style="color: #94a3b8; padding: 20px; text-align: center;">Dashboard not connected to HBlink4</div>';
-                }
-                
-                // Clear events display
-                const eventsList = document.getElementById('eventsList');
-                if (eventsList) {
-                    eventsList.innerHTML = '<div class="event-item">Waiting for HBlink4 connection...</div>';
-                }
-                
-                // Clear last heard display
-                const lastHeardList = document.getElementById('lastHeardList');
-                if (lastHeardList) {
-                    lastHeardList.innerHTML = '<div style="color: #94a3b8; padding: 10px; text-align: center;">No data</div>';
-                }
+                // Clear all connection groups, events, and last-heard via the
+                // normal render paths. (The previous code targeted element IDs
+                // that don't exist — repeatersList/eventsList/lastHeardList — so
+                // the guarded blocks silently no-op'd and stale data lingered.
+                // These also clear hotspots/networks/unknown, not just repeaters.)
+                updateRepeaters([]);
+                updateEvents([]);
+                updateLastHeard([]);
                 
                 // Reset stats to zero
                 document.getElementById('statConnections').textContent = '0';
@@ -1759,6 +1814,73 @@
             `;
         }
         
+        function updateOpenbridges(openbridges) {
+            const container = document.getElementById('openbridgesContainer');
+            const countElement = document.getElementById('openbridgeCount');
+            const section = document.getElementById('openbridgeSection');
+            const list = Array.isArray(openbridges) ? openbridges : Object.values(openbridges || {});
+
+            if (list.length === 0) {
+                if (section) section.style.display = 'none';
+                return;
+            }
+            if (section) section.style.display = 'block';
+
+            const upCount = list.filter(o => o.status === 'connected').length;
+            if (countElement) countElement.textContent = upCount > 0 ? `(${upCount})` : '';
+
+            const streams = state.streams || [];
+
+            container.innerHTML = list.map(o => {
+                const up = o.status === 'connected';
+                const headerClass = up ? 'outbound-header-connected' : 'outbound-header-disconnected';
+                const upDur = (up && o.connected_at) ? formatDuration(Date.now() / 1000 - o.connected_at) : '—';
+
+                // Talkgroup ownership map { "tgid": ts } -> "TS1/31, TS2/3120 …"
+                // (display as TS/TGID — standard DMR nomenclature; config keys by TGID
+                //  because the table's job is to assign each TGID a TS.)
+                const tgs = o.talkgroups || {};
+                const tgList = Object.keys(tgs).sort((a, b) => Number(a) - Number(b))
+                    .map(t => `TS${tgs[t]}/${t}`).join(', ') || '—';
+
+                // Live streams on this trunk (OBP is stream-multiplexed — list them all)
+                const active = streams.filter(s =>
+                    s.connection_type === 'openbridge' &&
+                    s.connection_name === o.connection_name &&
+                    (s.status === 'active' || s.status === 'hang_time'));
+                const streamHtml = active.length
+                    ? `<div class="obp-streams">` + active.map(s => {
+                        const who = s.callsign ? `${s.callsign} (${s.src_id})` : s.src_id;
+                        // TX (assumed/forwarded) vs RX (received from the peer),
+                        // with a DATA override. OBP is stream-multiplexed with no
+                        // slot to protect and no hang time, so there is no HANG
+                        // state here (unlike renderSlot()).
+                        let badge = s.is_assumed ? 'transmitting' : 'receiving';
+                        let label = s.is_assumed ? '⬆️ TX' : '⬇️ RX';
+                        if (s.is_data) { badge = 'data'; label = 'DATA'; }
+                        return `<span class="obp-stream-pill">`
+                             + `<span class="slot-status-badge ${badge}">${label}</span> `
+                             + `${who} → <span class="slot-col-value highlight">TG${s.dst_id}</span> `
+                             + `<span style="color:#64748b">TS${s.slot}</span></span>`;
+                      }).join('') + `</div>`
+                    : `<div class="obp-streams"><span class="obp-stream-pill idle">— idle —</span></div>`;
+
+                return `
+                    <div class="repeater-card" style="flex-direction:column;align-items:stretch">
+                        <div class="repeater-info" style="min-width:100%">
+                            <div class="${headerClass}">↔️ ${o.connection_name}
+                                <span style="font-weight:400;color:#94a3b8">(NetID ${o.network_id})</span></div>
+                            <div style="color:#94a3b8;font-size:11px;margin:2px 0">
+                                ${o.remote_address}:${o.remote_port} · up ${upDur} ·
+                                ${o.preserve_source_peer ? 'preserves source peer' : 'network_id in RptrId'}</div>
+                            <div style="font-size:10px;margin-top:4px">
+                                <span style="color:#94a3b8">TGs:</span> ${tgList}</div>
+                            ${streamHtml}
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
         function updateOutbounds(outbounds) {
             const container = document.getElementById('outboundsContainer');
             const countElement = document.getElementById('outboundCount');
@@ -1911,6 +2033,7 @@
             if (state.outbounds) {
                 const outboundList = Array.isArray(state.outbounds) ? state.outbounds : Object.values(state.outbounds || {});
                 updateOutbounds(outboundList);
+                updateOpenbridges(state.openbridges);
             }
         }
         
@@ -1978,20 +2101,90 @@
             if (state.user_db_status) updateUserDbStatus(state.user_db_status);
         }, 60000);
 
+        // ---- Collapsible sections -------------------------------------------
+        // Every collapsible header carries data-section (a stable key). Normal
+        // sections also carry data-collapse-target (the id of the body to hide).
+        // Last Heard is special: collapsing it does NOT hide the body — it
+        // filters the table to currently-active calls and retitles the header
+        // "Active Streams". Collapse state persists in localStorage.
+        const COLLAPSE_KEY = 'hblink4-collapsed-sections';
+        // Default collapse state for sections the user hasn't explicitly toggled.
+        // Everything starts open except Recent Events, which starts collapsed.
+        const COLLAPSE_DEFAULTS = { events: true };
+        let collapsedSections = {};
+        try {
+            collapsedSections = JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {};
+        } catch (e) {
+            collapsedSections = {};
+        }
+
+        function isSectionCollapsed(key) {
+            // A stored preference wins; otherwise fall back to the default.
+            return key in collapsedSections
+                ? !!collapsedSections[key]
+                : !!COLLAPSE_DEFAULTS[key];
+        }
+
+        function applySectionCollapse(key) {
+            const collapsed = isSectionCollapsed(key);
+            const header = document.querySelector(`.collapsible[data-section="${key}"]`);
+            if (header) header.classList.toggle('collapsed', collapsed);
+
+            if (key === 'lastHeard') {
+                // Special case: retitle + filter rather than hide the body.
+                const title = document.getElementById('lastHeardTitle');
+                if (title) title.textContent = collapsed ? 'Active Streams' : 'Last Heard';
+                renderLastHeard();
+                return;
+            }
+
+            const targetId = header && header.dataset.collapseTarget;
+            const body = targetId ? document.getElementById(targetId) : null;
+            if (body) body.style.display = collapsed ? 'none' : '';
+        }
+
+        function toggleSectionCollapse(key) {
+            collapsedSections[key] = !isSectionCollapsed(key);
+            try {
+                localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedSections));
+            } catch (e) { /* ignore storage failures */ }
+            applySectionCollapse(key);
+        }
+
+        function initCollapsibles() {
+            document.querySelectorAll('.collapsible[data-section]').forEach(header => {
+                const key = header.dataset.section;
+                header.addEventListener('click', () => toggleSectionCollapse(key));
+                applySectionCollapse(key);
+            });
+        }
+
         function updateLastHeard(users) {
+            // Persist the full list; renderLastHeard decides what to show based
+            // on whether the section is collapsed (Active Streams) or not.
+            state.last_heard = Array.isArray(users) ? users : [];
+            renderLastHeard();
+        }
+
+        function renderLastHeard() {
             const tbody = document.getElementById('lastHeardTable');
-            
+            if (!tbody) return;
+
+            const activeOnly = isSectionCollapsed('lastHeard');
+            let users = Array.isArray(state.last_heard) ? state.last_heard : [];
+            if (activeOnly) users = users.filter(u => u.active);
+
             if (!users || users.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="6" style="padding: 20px; text-align: center; color: #9ca3af;">
-                            No users heard yet
+                        <td colspan="6" style="padding: 8px 20px; text-align: center; color: #9ca3af;">
+                            ${activeOnly ? 'No active streams' : 'No users heard yet'}
                         </td>
                     </tr>
                 `;
                 return;
             }
-            
+
             // Build id-keyed lookup for translation check (state.repeaters is an array).
             const repeaterList = Array.isArray(state.repeaters) ? state.repeaters : Object.values(state.repeaters || {});
             const repeaterById = {};
@@ -2006,7 +2199,7 @@
                 let timeDisplay;
                 if (user.active) {
                     // Stream is currently active - show badge
-                    timeDisplay = '<span style="background: #10b981; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">Active</span>';
+                    timeDisplay = '<span style="background: #10b981; color: white; padding: 3px 8px; border-radius: 4px; font-size: 9px; font-weight: 600;">Active</span>';
                 } else if (elapsed < 60) {
                     timeDisplay = `${elapsed}s ago`;
                 } else if (elapsed < 3600) {
@@ -2098,6 +2291,14 @@
                             s.connection_name === data.connection_name &&
                             s.slot === data.slot
                         );
+                    } else if (connection_type === 'openbridge') {
+                        // OBP is stream-multiplexed: identify by stream_id, not
+                        // slot (many concurrent streams can share a slot).
+                        startStreamIndex = state.streams.findIndex(s =>
+                            s.connection_type === 'openbridge' &&
+                            s.connection_name === data.connection_name &&
+                            s.stream_id === data.stream_id
+                        );
                     } else {
                         startStreamIndex = state.streams.findIndex(s =>
                             s.repeater_id == data.repeater_id && s.slot == data.slot
@@ -2120,15 +2321,23 @@
                     // Voice calls: clear any lingering data timer for this
                     // slot (a real voice transmission supersedes).
                     {
-                        const persistConnId = connection_type === 'outbound'
+                        const persistConnId = (connection_type === 'outbound' || connection_type === 'openbridge')
                             ? data.connection_name : data.repeater_id;
-                        const persistKey = dataPersistKey(connection_type, persistConnId, data.slot);
+                        // OBP is stream-multiplexed — scope the persist timer to the
+                        // stream_id, not the slot (multiple streams share a slot).
+                        const persistScope = connection_type === 'openbridge' ? data.stream_id : data.slot;
+                        const persistKey = dataPersistKey(connection_type, persistConnId, persistScope);
                         if (data.is_data) {
                             scheduleDataPersistDrop(persistKey, connection_type, (s) => {
                                 if (connection_type === 'outbound') {
                                     return s.connection_type === 'outbound'
                                         && s.connection_name === data.connection_name
                                         && Number(s.slot) === Number(data.slot);
+                                }
+                                if (connection_type === 'openbridge') {
+                                    return s.connection_type === 'openbridge'
+                                        && s.connection_name === data.connection_name
+                                        && s.stream_id === data.stream_id;
                                 }
                                 return s.repeater_id == data.repeater_id
                                     && Number(s.slot) === Number(data.slot);
@@ -2141,6 +2350,9 @@
                     // Immediately update the display
                     if (connection_type === 'outbound') {
                         updateOutbounds(state.outbounds);
+                        updateOpenbridges(state.openbridges);
+                    } else if (connection_type === 'openbridge') {
+                        updateOpenbridges(state.openbridges);
                     } else if (state.repeaters) {
                         updateRepeaters(state.repeaters);
                     }
@@ -2151,6 +2363,27 @@
                 case 'stream_end':
                     // Update stream status to hang_time
                     const endConnectionType = data.connection_type || 'repeater';
+
+                    if (endConnectionType === 'openbridge') {
+                        // OBP has no hang time — drop the ended stream outright so
+                        // the pill clears immediately (matches server.py, which
+                        // deletes OBP streams on end). Multiplexed: match by
+                        // stream_id. Data pills are governed by the persistence
+                        // timer; leave those for scheduleDataPersistDrop to remove.
+                        const endObp = state.streams.find(s =>
+                            s.connection_type === 'openbridge' &&
+                            s.connection_name === data.connection_name &&
+                            s.stream_id === data.stream_id);
+                        if (endObp && !endObp.is_data) {
+                            state.streams = state.streams.filter(s =>
+                                !(s.connection_type === 'openbridge' &&
+                                  s.connection_name === data.connection_name &&
+                                  s.stream_id === data.stream_id));
+                        }
+                        updateOpenbridges(state.openbridges);
+                        break;
+                    }
+
                     const endStreamIndex = state.streams.findIndex(s => {
                         if (endConnectionType === 'outbound') {
                             return s.connection_type === 'outbound' &&
@@ -2180,6 +2413,7 @@
                     if (endConnectionType === 'outbound') {
                         const outboundList = Array.isArray(state.outbounds) ? state.outbounds : Object.values(state.outbounds || {});
                         updateOutbounds(outboundList);
+                        updateOpenbridges(state.openbridges);
                     } else if (state.repeaters) {
                         updateRepeaters(state.repeaters);
                         // Update last heard display for repeater RX streams
@@ -2202,6 +2436,7 @@
                     if (hangConnectionType === 'outbound') {
                         const outboundList = Array.isArray(state.outbounds) ? state.outbounds : Object.values(state.outbounds || {});
                         updateOutbounds(outboundList);
+                        updateOpenbridges(state.openbridges);
                     } else if (state.repeaters) {
                         updateRepeaters(state.repeaters);
                         // Also update last heard display for repeater RX streams
@@ -2278,6 +2513,7 @@
                         state.outbounds.push({ ...data, status: 'connected' });
                     }
                     updateOutbounds(state.outbounds);
+                    updateOpenbridges(state.openbridges);
                     playConnectTone();
                     break;
                 
@@ -2290,6 +2526,7 @@
                         state.outbounds.push({ ...data, status: 'connecting' });
                     }
                     updateOutbounds(state.outbounds);
+                    updateOpenbridges(state.openbridges);
                     break;
                 
                 case 'outbound_disconnected':
@@ -2298,6 +2535,7 @@
                     if (disconnectIdx >= 0) {
                         state.outbounds[disconnectIdx] = { ...state.outbounds[disconnectIdx], ...data, status: 'disconnected' };
                         updateOutbounds(state.outbounds);
+                        updateOpenbridges(state.openbridges);
                         playDisconnectTone();
                     }
                     break;
@@ -2311,6 +2549,7 @@
                         state.outbounds.push({ ...data, status: 'error' });
                     }
                     updateOutbounds(state.outbounds);
+                    updateOpenbridges(state.openbridges);
                     playAlertTone();
                     break;
             }
@@ -2430,9 +2669,121 @@
         document.getElementById('audioToggle').addEventListener('click', toggleAudio);
         updateAudioToggle();
         
+        // ---------------------------------------------------------------------------
+        // Demo mode (?demo in URL) — coherent static scenario, no WebSocket/server.
+        // Paradigm (HBlink4 = edge access server fed by an HBlink3 core over OBP):
+        //   • KS-CORE OBP trunk carries US-Nationwide (31/TS1), KS-Statewide
+        //     (3120/TS2) and MO-Local (3100/TS2) to/from the core.
+        //   • N0CAL is transmitting KS-Statewide (3120) IN on the trunk → delivered
+        //     to subscribed devices (W0ABC, KD0XYZ) on TS2.
+        //   • W0ABC keyed US-Nationwide (31) on its TS1 → egresses OUT the trunk.
+        //   • W0DEF just finished MO-Local (3100) on KD0XYZ TS1 → TX hang.
+        //   • N0MJS has an RF translation TS2/TG8 ↔ Net TS2/TG3120 (shown gold).
+        // The 1s ticker still runs, so active durations count up live.
+        // ---------------------------------------------------------------------------
+        function loadDemo() {
+            const now = Date.now() / 1000;   // unix seconds
+
+            state.repeaters = [
+                { repeater_id: 3112001, callsign: 'W0ABC', location: 'Topeka, KS',
+                  status: 'connected', connection_type: 'repeater',
+                  rx_freq: '448800000', tx_freq: '443800000',
+                  connected_at: now - 3672, missed_pings: 0,
+                  slot1_talkgroups: [31], slot2_talkgroups: [3120, 3100],
+                  translations: [], rpto_received: false },
+                { repeater_id: 3112002, callsign: 'KD0XYZ', location: 'Lawrence, KS',
+                  status: 'connected', connection_type: 'hotspot',
+                  rx_freq: '', tx_freq: '',
+                  connected_at: now - 1245, missed_pings: 0,
+                  slot1_talkgroups: [3100], slot2_talkgroups: [3120],
+                  translations: [], rpto_received: true },
+                { repeater_id: 3112003, callsign: 'N0MJS', location: 'Wichita, KS',
+                  status: 'connected', connection_type: 'repeater',
+                  rx_freq: '449500000', tx_freq: '444500000',
+                  connected_at: now - 412, missed_pings: 1,
+                  slot1_talkgroups: [31], slot2_talkgroups: [3120],
+                  translations: [[2, 8, 2, 3120]], rpto_received: false },
+            ];
+
+            state.outbounds = [
+                { connection_name: 'KC-REGIONAL', radio_id: 3129200, status: 'connected',
+                  connected_at: now - 5412, missed_acks: 0,
+                  remote_address: '10.5.0.1', remote_port: 54001,
+                  slot1_talkgroups: [31], slot2_talkgroups: [3100] },
+            ];
+
+            state.openbridges = [
+                { connection_name: 'KS-CORE', network_id: 3120, status: 'connected',
+                  connected_at: now - 8130,
+                  remote_address: 'core.ksdmr.net', remote_port: 62031,
+                  preserve_source_peer: true,
+                  talkgroups: { '31': 1, '3120': 2, '3100': 2 } },
+            ];
+
+            state.streams = [
+                // Call A: KS-Statewide (3120) inbound on the trunk → devices (TS2)
+                { connection_type: 'openbridge', connection_name: 'KS-CORE', slot: 2,
+                  status: 'active', is_assumed: false, is_data: false, call_type: 'group',
+                  src_id: 3188765, callsign: 'N0CAL', dst_id: 3120, start_time: now - 6 },
+                { repeater_id: 3112001, slot: 2, status: 'active', is_assumed: true,
+                  is_data: false, call_type: 'group', src_id: 3188765, dst_id: 3120, start_time: now - 6 },
+                { repeater_id: 3112002, slot: 2, status: 'active', is_assumed: true,
+                  is_data: false, call_type: 'group', src_id: 3188765, dst_id: 3120, start_time: now - 6 },
+                // Call B: W0ABC keys US-Nationwide (31) on TS1 → egress OUT the trunk
+                { repeater_id: 3112001, slot: 1, status: 'active', is_assumed: false,
+                  is_data: false, call_type: 'group', src_id: 3112001, dst_id: 31, start_time: now - 4 },
+                { connection_type: 'openbridge', connection_name: 'KS-CORE', slot: 1,
+                  status: 'active', is_assumed: true, is_data: false, call_type: 'group',
+                  src_id: 3112001, callsign: 'W0ABC', dst_id: 31, start_time: now - 4 },
+                // Call C: MO-Local (3100) just ended on KD0XYZ TS1 → TX hang
+                { repeater_id: 3112002, slot: 1, status: 'hang_time', is_assumed: true,
+                  is_data: false, call_type: 'group', src_id: 3161001, dst_id: 3100, start_time: now - 22 },
+            ];
+
+            state.last_heard = [
+                { radio_id: 3188765, callsign: 'N0CAL', talkgroup: 3120, slot: 2,
+                  call_type: 'group', is_data: false, active: true,
+                  source_name: 'KS-CORE', last_heard: now - 6 },
+                { radio_id: 3112001, callsign: 'W0ABC', talkgroup: 31, slot: 1,
+                  call_type: 'group', is_data: false, active: true,
+                  source_name: 'W0ABC', source_repeater_id: 3112001, last_heard: now - 4 },
+                { radio_id: 3161001, callsign: 'W0DEF', talkgroup: 3100, slot: 1,
+                  call_type: 'group', is_data: false, active: false,
+                  source_name: 'KD0XYZ', source_repeater_id: 3112002, last_heard: now - 22 },
+                { radio_id: 3112003, callsign: 'KE0FGH', talkgroup: 3112001, slot: 2,
+                  call_type: 'private', is_data: false, active: false,
+                  source_name: 'N0MJS', source_repeater_id: 3112003, last_heard: now - 95 },
+                { radio_id: 3112002, callsign: 'KD0XYZ', talkgroup: 3100, slot: 1,
+                  call_type: 'group', is_data: true, active: false,
+                  source_name: 'KD0XYZ', source_repeater_id: 3112002, last_heard: now - 140 },
+                { radio_id: 3129100, callsign: '', talkgroup: 31, slot: 1,
+                  call_type: 'group', is_data: false, active: false,
+                  source_name: 'KC-REGIONAL', last_heard: now - 305 },
+            ];
+
+            state.stats = { total_calls_today: 1287, total_duration_today: 14520, retransmitted_calls: 342 };
+            state.events = [];
+            state.user_db_status = null;
+
+            updateHBlinkStatus(true);
+            updateWebSocketStatus(true);
+            updateRepeaters(state.repeaters);
+            updateOutbounds(state.outbounds);
+            updateOpenbridges(state.openbridges);
+            updateEvents(state.events);
+            updateStats(state.stats, state.repeaters, state.streams);
+            updateLastHeard(state.last_heard);
+            updateUserDbStatus(state.user_db_status);
+        }
+
         // Initialize dashboard
+        initCollapsibles();
         loadConfig();
-        connectWebSocket();
+        if (new URLSearchParams(location.search).has('demo')) {
+            loadDemo();
+        } else {
+            connectWebSocket();
+        }
     </script>
 </body>
 </html>

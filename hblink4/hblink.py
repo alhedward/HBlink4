@@ -18,7 +18,8 @@ import socket
 from typing import Dict, Any, Optional, Tuple, Union, List, Set
 from time import time
 from random import randint
-from hashlib import sha256
+from hashlib import sha256, sha1
+from hmac import new as hmac_new, compare_digest
 import re
 
 import signal
@@ -45,14 +46,15 @@ try:
         cleanup_old_logs, setup_logging, PeerAddress, detect_connection_type,
         fmt_ts_tg
     )
-    from .config import load_config as load_config_func, parse_outbound_connections as parse_outbound_func
+    from .config import load_config as load_config_func, parse_outbound_connections as parse_outbound_func, parse_openbridge_connections as parse_openbridge_func
     from .protocol import (
         parse_dmr_packet, is_dmr_terminator, validate_packet_length,
         extract_packet_command, get_call_type_name, format_id_display,
         get_slot_name
     )
     from .models import (
-        OutboundConnectionConfig, StreamState, OutboundState, RepeaterState
+        OutboundConnectionConfig, StreamState, OutboundState, RepeaterState,
+        OpenBridgeConnectionConfig, OpenBridgeState
     )
     from .lc import (
         LC_OPT_GROUP_DEFAULT, LC_CARRIER_NONE, LC_CARRIER_VHEAD,
@@ -76,14 +78,15 @@ except ImportError:
         cleanup_old_logs, setup_logging, PeerAddress, detect_connection_type,
         fmt_ts_tg
     )
-    from config import load_config as load_config_func, parse_outbound_connections as parse_outbound_func
+    from config import load_config as load_config_func, parse_outbound_connections as parse_outbound_func, parse_openbridge_connections as parse_openbridge_func
     from protocol import (
         parse_dmr_packet, is_dmr_terminator, validate_packet_length,
         extract_packet_command, get_call_type_name, format_id_display,
         get_slot_name
     )
     from models import (
-        OutboundConnectionConfig, StreamState, OutboundState, RepeaterState
+        OutboundConnectionConfig, StreamState, OutboundState, RepeaterState,
+        OpenBridgeConnectionConfig, OpenBridgeState
     )
     from lc import (
         LC_OPT_GROUP_DEFAULT, LC_CARRIER_NONE, LC_CARRIER_VHEAD,
@@ -102,10 +105,26 @@ class OutboundProtocol(asyncio.DatagramProtocol):
         super().__init__()
         self.hbprotocol = hbprotocol
         self.connection_name = connection_name
-    
+
     def datagram_received(self, data: bytes, addr: tuple):
         """Receive packet for this specific outbound connection"""
         self.hbprotocol._handle_outbound_packet(self.connection_name, data, addr)
+
+
+class OpenBridgeProtocol(asyncio.DatagramProtocol):
+    """Protocol instance for a single OpenBridge (OBP) trunk socket.
+
+    Each OBP gets its own bound UDP socket. OBP has no login/keepalive
+    handshake; authentication is the per-packet HMAC plus the source socket.
+    """
+    def __init__(self, hbprotocol: 'HBProtocol', obp_name: str):
+        super().__init__()
+        self.hbprotocol = hbprotocol
+        self.obp_name = obp_name
+
+    def datagram_received(self, data: bytes, addr: tuple):
+        self.hbprotocol._handle_openbridge_packet(self.obp_name, data, addr)
+
 
 class HBProtocol(asyncio.DatagramProtocol):
     """UDP Implementation of HomeBrew DMR Server Protocol"""
@@ -116,6 +135,8 @@ class HBProtocol(asyncio.DatagramProtocol):
         
         # Outbound connection state management (Phase 2)
         self._outbounds: Dict[str, 'OutboundState'] = {}  # keyed by connection name
+        self._openbridges: Dict[str, 'OpenBridgeState'] = {}  # keyed by OBP name
+        self._obp_by_tgid: Dict[bytes, str] = {}  # canonical 3-byte TGID -> owning OBP name (enabled only)
         self._outbound_by_id: Dict[bytes, str] = {}  # radio_id (4 bytes) -> name for packet routing by ID
         self._outbound_ids: Set[int] = set()  # reserved IDs to prevent DoS
         
@@ -1520,6 +1541,25 @@ class HBProtocol(asyncio.DatagramProtocol):
                                                    current_time, stream_timeout, hang_time):
                     outbound.slot2_stream = None
 
+        # Reap stale OpenBridge streams. OBP is stream-multiplexed (no slot to
+        # protect and no hang time), so a stream is simply dropped once it ends
+        # or goes quiet past the stream timeout (backstop for a lost terminator).
+        for obp in self._openbridges.values():
+            if not obp.streams:
+                continue
+            stale = [(sid, s) for sid, s in obp.streams.items()
+                     if s.ended or (current_time - s.last_seen) > stream_timeout]
+            for sid, s in stale:
+                # If the terminator was lost, the stream_end was never emitted, so
+                # the dashboard pill would hang. Emit it now (RX or TX alike — both
+                # live in this dict). Streams already flagged ended emitted their
+                # stream_end at the terminator; don't double-emit those.
+                if not s.ended:
+                    s.ended = True
+                    s.end_time = current_time
+                    self._emit_stream_end('openbridge', obp.config.name, s.slot, s, 'timeout')
+                del obp.streams[sid]
+
         # Cleanup old denied stream entries (older than 10 seconds)
         denied_cutoff = current_time - 10.0
         self._denied_streams = {k: v for k, v in self._denied_streams.items() if v > denied_cutoff}
@@ -1565,7 +1605,11 @@ class HBProtocol(asyncio.DatagramProtocol):
                     'slot2_talkgroups': self._format_tg_json(outbound.slot2_talkgroups)
                 })
             
-            LOGGER.info(f'📤 Sent initial state: {len([r for r in self._repeaters.values() if r.connected])} connected repeaters, {len(self._outbounds)} outbound connections')
+            # Send all OpenBridge trunks (bound = up; OBP has no auth handshake)
+            for obp in self._openbridges.values():
+                self._events.emit('openbridge_connected', self._openbridge_event_data(obp))
+
+            LOGGER.info(f'📤 Sent initial state: {len([r for r in self._repeaters.values() if r.connected])} connected repeaters, {len(self._outbounds)} outbound connections, {len(self._openbridges)} OpenBridge trunks')
         except Exception as e:
             LOGGER.error(f'Error sending initial state: {e}')
     
@@ -3295,10 +3339,15 @@ class HBProtocol(asyncio.DatagramProtocol):
         """DMR terminator detection - delegated to protocol module"""
         return is_dmr_terminator(data, frame_type)
     
-    def _calculate_stream_targets(self, source_repeater_id: bytes, slot: int, 
+    def _calculate_stream_targets(self, source, slot: int,
                                   dst_id: bytes, stream_id: bytes, rf_src: bytes) -> set:
         """
-        Calculate which repeaters AND outbound connections should receive this ENTIRE transmission.
+        Calculate which repeaters, outbound connections, AND OpenBridges should receive this ENTIRE transmission.
+
+        `source` is the origin identifier, used only to avoid echoing back to it:
+        a repeater_id (bytes) or an ('openbridge', name) tuple. Equality is
+        checked against each candidate; a repeater_id never equals a tuple, so
+        the self-skip is correct regardless of source type.
         
         Checks both routing rules AND current slot availability at stream start.
         If a slot is busy now, that target is excluded from THIS transmission,
@@ -3320,8 +3369,8 @@ class HBProtocol(asyncio.DatagramProtocol):
         # `slot`/`dst_id` are network-side values — each target may remap them
         # to its own local slot/tgid before landing on the air.
         for target_repeater_id, target_repeater in self._repeaters.items():
-            # Skip source repeater
-            if target_repeater_id == source_repeater_id:
+            # Skip source (a repeater_id never equals an ('openbridge', name) tuple)
+            if target_repeater_id == source:
                 continue
 
             # Only forward to connected repeaters
@@ -3395,10 +3444,20 @@ class HBProtocol(asyncio.DatagramProtocol):
             
             # Passed all checks - will receive entire transmission
             target_set.add(('outbound', conn_name))
-        
+
+        # OpenBridge (OBP) targets. OBP is stream-multiplexed and TGID-transparent:
+        # ownership is by canonical TGID only (no slot/contention gating), and
+        # Position B means no target remap. The reflection guard is the same
+        # self-skip used above — never send back out the source OBP.
+        for obp_name, obp in self._openbridges.items():
+            if source == ('openbridge', obp_name):
+                continue
+            if dst_id in obp.config.talkgroup_slots:
+                target_set.add(('openbridge', obp_name))
+
         return target_set
     
-    def _forward_stream(self, data: bytes, source_repeater_id: bytes, slot: int,
+    def _forward_stream(self, data: bytes, source, slot: int,
                        rf_src: bytes, dst_id: bytes, stream_id: bytes) -> None:
         """
         Forward DMR stream to target repeaters using cached routing.
@@ -3421,27 +3480,45 @@ class HBProtocol(asyncio.DatagramProtocol):
 
         Args:
             data: Complete DMRD packet (20-byte HBP header + 33-byte DMR data)
-            source_repeater_id: Repeater ID of originating repeater
+            source: origin identifier — a repeater_id (bytes) or ('openbridge', name)
             slot: Source-local timeslot (1 or 2)
             rf_src: RF source subscriber ID (3 bytes) — source-local
             dst_id: Destination TGID (3 bytes) — source-local
             stream_id: Unique stream identifier (4 bytes)
         """
-        # Get source repeater's stream (which has the routing cache)
-        source_repeater = self._repeaters.get(source_repeater_id)
-        if not source_repeater:
-            return
+        # Resolve the source (repeater or OpenBridge). An OBP source has no
+        # translation (Position B, identity), and its stream lives in the OBP's
+        # stream dict rather than a repeater slot. source_peer_id is the true
+        # originating peer, used when framing for an OBP target.
+        if isinstance(source, tuple) and source[0] == 'openbridge':
+            source_obp = self._openbridges.get(source[1])
+            if not source_obp:
+                return
+            source_stream = source_obp.streams.get(stream_id)
+            src_inbound_map = None
+            src_tx_override = None
+            source_disp_id = source_obp.config.network_id
+            source_peer_id = (source_stream.repeater_id if source_stream
+                              else source_obp.config.network_id.to_bytes(4, 'big'))
+        else:
+            source_repeater = self._repeaters.get(source)
+            if not source_repeater:
+                return
+            source_stream = source_repeater.get_slot_stream(slot)
+            src_inbound_map = source_repeater.inbound_map
+            src_tx_override = source_repeater.tx_src_override
+            source_disp_id = int.from_bytes(source, 'big')
+            source_peer_id = source  # repeater_id (4 bytes) — true source peer
 
-        source_stream = source_repeater.get_slot_stream(slot)
         if not source_stream or source_stream.stream_id != stream_id:
             # This shouldn't happen, but safety check
             LOGGER.warning(f'Forwarding called but no matching stream found')
             return
 
         # Translate source-local → network ONCE. All target lookups use network
-        # keys (outbound_map is keyed on network values).
-        if source_repeater.inbound_map:
-            net_slot, net_dst_id = source_repeater.inbound_map.get((slot, dst_id), (slot, dst_id))
+        # keys (outbound_map is keyed on network values). OBP source = identity.
+        if src_inbound_map:
+            net_slot, net_dst_id = src_inbound_map.get((slot, dst_id), (slot, dst_id))
         else:
             net_slot, net_dst_id = slot, dst_id
 
@@ -3450,8 +3527,8 @@ class HBProtocol(asyncio.DatagramProtocol):
         # byte 15 (0 = group, 1 = private/unit). Unit calls are rejected upstream
         # today, but gate here too so the override stays scoped to group voice.
         call_type_bit = (data[15] & 0x40) >> 6
-        if source_repeater.tx_src_override is not None and call_type_bit == 0:
-            net_rf_src = source_repeater.tx_src_override
+        if src_tx_override is not None and call_type_bit == 0:
+            net_rf_src = src_tx_override
         else:
             net_rf_src = rf_src
 
@@ -3460,7 +3537,7 @@ class HBProtocol(asyncio.DatagramProtocol):
             # Safety fallback (shouldn't happen)
             LOGGER.warning(f'Stream routing not cached, recalculating')
             source_stream.target_repeaters = self._calculate_stream_targets(
-                source_repeater_id, net_slot, net_dst_id, stream_id, net_rf_src
+                source, net_slot, net_dst_id, stream_id, net_rf_src
             )
             source_stream.routing_cached = True
 
@@ -3574,8 +3651,25 @@ class HBProtocol(asyncio.DatagramProtocol):
                 # We must track what we're transmitting on each timeslot
                 self._update_assumed_stream_outbound(outbound, net_slot, net_rf_src, net_dst_id,
                                                     stream_id, is_terminator,
-                                                    int.from_bytes(source_repeater_id, 'big'),
+                                                    source_disp_id,
                                                     is_unit_call=source_stream.is_unit_call)
+
+            elif isinstance(target, tuple) and target[0] == 'openbridge':
+                # OBP target: canonical network-side addressing, no target remap
+                # (Position B). Build the net-side DMRD, then frame it for OBP —
+                # RptrId per preserve_source_peer, wire slot forced to 1, HMAC.
+                obp = self._openbridges.get(target[1])
+                if not obp:
+                    continue
+                dmrd53 = build_target_packet(net_slot, net_dst_id, net_rf_src, None)
+                obp.transport.sendto(
+                    self._obp_build_egress(obp, dmrd53, source_peer_id), obp.sockaddr)
+
+                # Track the assumed TX stream so the dashboard draws an outbound
+                # pill and the stream ends cleanly (terminator or reaper backstop).
+                self._update_assumed_stream_obp(
+                    obp, net_slot, net_rf_src, net_dst_id, stream_id, is_terminator,
+                    is_unit_call=source_stream.is_unit_call)
 
             else:
                 # Target is a local repeater (bytes)
@@ -3608,7 +3702,7 @@ class HBProtocol(asyncio.DatagramProtocol):
                 # Track assumed stream state on target repeater using target-local values
                 self._update_assumed_stream(target_repeater, out_slot, net_rf_src, out_dst,
                                            stream_id, is_terminator,
-                                           int.from_bytes(source_repeater_id, 'big'),
+                                           source_disp_id,
                                            net_slot=net_slot, net_dst_id=net_dst_id,
                                            is_unit_call=source_stream.is_unit_call)
     
@@ -3883,6 +3977,206 @@ class HBProtocol(asyncio.DatagramProtocol):
                 'terminator'
             )
 
+    def _update_assumed_stream_obp(self, obp: 'OpenBridgeState', slot: int, rf_src: bytes,
+                                   dst_id: bytes, stream_id: bytes, is_terminator: bool,
+                                   is_unit_call: bool = False) -> None:
+        """Track and emit dashboard events for a TX (assumed) stream on an OBP trunk.
+
+        OBP is stream-multiplexed (no TDMA slot), so the assumed TX stream is
+        keyed by stream_id in the trunk's own stream dict — the same dict the
+        RX/ingress path uses and the stale-stream reaper already sweeps (source
+        != target for any stream, so RX and TX entries never collide). Marked
+        is_assumed=True so the dashboard renders it as an outbound pill. Mirrors
+        the OBP ingress emit and deliberately does NOT touch _active_calls,
+        matching ingress (OBP streams are not counted toward the active total).
+        """
+        current_time = time()
+        stream = obp.streams.get(stream_id)
+        if stream is None:
+            call_type = "private" if is_unit_call else "group"
+            stream = StreamState(
+                repeater_id=obp.config.network_id.to_bytes(4, 'big'),  # our ID (TX)
+                rf_src=rf_src,
+                dst_id=dst_id,
+                slot=slot,
+                start_time=current_time,
+                last_seen=current_time,
+                stream_id=stream_id,
+                packet_count=1,
+                call_type=call_type,
+                is_assumed=True,  # TX, not received from the peer
+                is_unit_call=is_unit_call,
+            )
+            obp.streams[stream_id] = stream
+            LOGGER.info(f'[OBP {obp.config.name}] TX stream start '
+                        f'src={int.from_bytes(rf_src, "big")} '
+                        f'tgid={int.from_bytes(dst_id, "big")} -> TS{slot} '
+                        f'stream_id={stream_id.hex()}')
+            self._emit_stream_start(
+                'openbridge',
+                obp.config.name,
+                slot,
+                rf_src,
+                dst_id,
+                stream_id,
+                call_type,
+                True,  # TX assumed stream
+            )
+        else:
+            stream.last_seen = current_time
+            stream.packet_count += 1
+
+        if is_terminator and not stream.ended:
+            stream.ended = True
+            stream.end_time = current_time
+            LOGGER.info(f'[OBP {obp.config.name}] TX stream end '
+                        f'stream_id={stream_id.hex()} packets={stream.packet_count}')
+            self._emit_stream_end('openbridge', obp.config.name, slot, stream, 'terminator')
+
+
+    # ------------------------------------------------------------------
+    # OpenBridge (OBP) — stream-multiplexed, TGID-transparent trunk.
+    # Wire frame: 53-byte DMRD + 20-byte HMAC-SHA1(passphrase, DMRD).
+    # No login/keepalive; auth is the per-packet HMAC plus the source socket.
+    # Position B: the wire TGID IS the canonical TGID (no OBP-edge re-number);
+    # the talkgroup_slots table assigns the LOCAL timeslot and is the
+    # fail-closed filter. See development/openbridge-hblink3-hblink4-design.md.
+    # ------------------------------------------------------------------
+
+    async def _start_openbridge(self, config: 'OpenBridgeConnectionConfig', loop) -> None:
+        """Bind one OBP socket and register its state (one socket per OBP)."""
+        try:
+            infos = await loop.getaddrinfo(config.target_address, config.target_port,
+                                           type=socket.SOCK_DGRAM)
+            target_ip, target_port = infos[0][4][0], infos[0][4][1]
+        except Exception as e:
+            LOGGER.error(f'[OBP {config.name}] target DNS resolution failed: {e}')
+            return
+        try:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: OpenBridgeProtocol(self, config.name),
+                local_addr=(config.local_address, config.local_port)
+            )
+        except Exception as e:
+            LOGGER.error(f'[OBP {config.name}] failed to bind '
+                         f'{config.local_address}:{config.local_port}: {e}')
+            return
+        state = OpenBridgeState(config=config, ip=target_ip, port=target_port, transport=transport)
+        self._openbridges[config.name] = state
+        for tgid in config.talkgroup_slots:
+            self._obp_by_tgid[tgid] = config.name
+        LOGGER.info(f'✓ OpenBridge "{config.name}" bound {config.local_address}:{config.local_port} '
+                    f'→ {target_ip}:{target_port} ({len(config.talkgroup_slots)} talkgroups)')
+        self._events.emit('openbridge_connected', self._openbridge_event_data(state))
+
+    def _openbridge_event_data(self, state: 'OpenBridgeState') -> dict:
+        """Dashboard payload describing an OBP trunk (name, peer, and TGID→TS map)."""
+        cfg = state.config
+        return {
+            'connection_name': cfg.name,
+            'network_id': cfg.network_id,
+            'remote_address': cfg.target_address,
+            'remote_port': state.port,
+            'preserve_source_peer': cfg.preserve_source_peer,
+            'talkgroups': {str(int.from_bytes(t, 'big')): ts
+                           for t, ts in cfg.talkgroup_slots.items()},
+        }
+
+    @staticmethod
+    def _obp_key(passphrase) -> bytes:
+        """OBP HMAC key: passphrase as bytes."""
+        return passphrase.encode('utf-8') if isinstance(passphrase, str) else passphrase
+
+    def _handle_openbridge_packet(self, obp_name: str, packet: bytes, addr: tuple) -> None:
+        """Authenticate, filter, and (TODO: route) an inbound OBP frame."""
+        state = self._openbridges.get(obp_name)
+        if state is None:
+            return
+        cfg = state.config
+
+        # OBP carries only DMRD frames (53-byte DMRD + 20-byte HMAC-SHA1).
+        if len(packet) != 73 or packet[:4] != DMRD:
+            return
+        dmrd = packet[:53]
+        rx_hmac = packet[53:]
+        calc = hmac_new(self._obp_key(cfg.passphrase), dmrd, sha1).digest()
+        # Auth: HMAC must match AND the source socket must be the configured peer.
+        if not compare_digest(rx_hmac, calc) or (addr[0], addr[1]) != (state.ip, state.port):
+            LOGGER.debug(f'[OBP {obp_name}] frame discarded (HMAC or source mismatch)')
+            return
+
+        dst_id = dmrd[8:11]                 # canonical TGID (wire == canonical)
+        local_ts = cfg.talkgroup_slots.get(dst_id)
+        if local_ts is None:
+            return                          # unmapped TGID -> dropped (fail-closed filter)
+
+        rf_src = dmrd[5:8]
+        peer_id = dmrd[11:15]
+        stream_id = dmrd[16:20]
+
+        # Normalize the DMR frame onto the assigned local timeslot. The OBP wire
+        # slot is meaningless (forced to 1 by convention); HBlink4's core is
+        # (TS,TGID)-keyed, so stamp the assigned TS into the slot bit (byte 15,
+        # bit 7: 0=TS1, 1=TS2) before the frame enters routing.
+        bits = (dmrd[15] | 0x80) if local_ts == 2 else (dmrd[15] & 0x7F)
+        if bits != dmrd[15]:
+            dmrd = dmrd[:15] + bytes([bits]) + dmrd[16:]
+
+        source = ('openbridge', obp_name)
+        now = time()
+        frame_type = (bits & 0x30) >> 4
+        is_term = self._is_dmr_terminator(dmrd, frame_type)
+
+        stream = state.streams.get(stream_id)
+        if stream is None:
+            # New OBP stream: compute + cache targets once on (local_ts, canonical TGID).
+            targets = self._calculate_stream_targets(source, local_ts, dst_id, stream_id, rf_src)
+            stream = StreamState(
+                repeater_id=peer_id, rf_src=rf_src, dst_id=dst_id, slot=local_ts,
+                start_time=now, last_seen=now, stream_id=stream_id, packet_count=1,
+                call_type='group', target_repeaters=targets, routing_cached=True,
+            )
+            state.streams[stream_id] = stream
+            LOGGER.info(f'[OBP {obp_name}] RX stream start src={int.from_bytes(rf_src, "big")} '
+                        f'tgid={int.from_bytes(dst_id, "big")} -> TS{local_ts} '
+                        f'stream_id={stream_id.hex()} targets={len(targets)}')
+            self._emit_stream_start('openbridge', obp_name, local_ts, rf_src, dst_id,
+                                    stream_id, 'group',
+                                    remote_repeater_id=int.from_bytes(peer_id, 'big'))
+        else:
+            stream.last_seen = now
+            stream.packet_count += 1
+
+        # Forward through the shared path (per-target rewrite, reflection guard,
+        # and OBP-target framing all live there — one routing path for all sources).
+        self._forward_stream(dmrd, source, local_ts, rf_src, dst_id, stream_id)
+
+        if is_term and not stream.ended:
+            stream.ended = True
+            stream.end_time = now
+            LOGGER.info(f'[OBP {obp_name}] RX stream end stream_id={stream_id.hex()} '
+                        f'packets={stream.packet_count}')
+            self._emit_stream_end('openbridge', obp_name, local_ts, stream, 'terminator')
+
+    def _obp_build_egress(self, state: 'OpenBridgeState', dmrd53: bytes,
+                          source_peer_id: bytes) -> bytes:
+        """Frame a DMRD as a 73-byte OBP packet for this OBP.
+
+        - Truncated to a canonical 53-byte DMRD: HBP repeater sources deliver
+          55-byte frames (trailing BER/RSSI bytes) which must be dropped so the
+          wire frame is exactly 53 DMRD + 20 HMAC = 73; the peer computes its
+          HMAC over 53 bytes and rejects anything longer.
+        - RptrId (bytes 11:15): the true source peer when preserve_source_peer,
+          else our network_id (Brandmeister-spec behavior).
+        - Wire slot forced to 1 (OBP convention; the far end derives its own
+          local TS from its talkgroup_slots table). Bit 0x80 is the slot-2 flag.
+        - HMAC-SHA1(passphrase, DMRD) appended.
+        """
+        cfg = state.config
+        rptr_id = source_peer_id if cfg.preserve_source_peer else cfg.network_id.to_bytes(4, 'big')
+        bits = dmrd53[15] & ~0x80          # force slot 1 on the wire
+        dmrd = b''.join([dmrd53[:11], rptr_id, bytes([bits]), dmrd53[16:53]])
+        return dmrd + hmac_new(self._obp_key(cfg.passphrase), dmrd, sha1).digest()
 
     def _send_packet(self, data: bytes, addr: tuple):
         """Send packet to specified address"""
@@ -3922,6 +4216,10 @@ def load_config(config_file: str):
 def parse_outbound_connections() -> List[OutboundConnectionConfig]:
     """Wrapper for config module parse_outbound_connections"""
     return parse_outbound_func(CONFIG, LOGGER)
+
+def parse_openbridge_connections() -> List[OpenBridgeConnectionConfig]:
+    """Wrapper for config module parse_openbridge_connections"""
+    return parse_openbridge_func(CONFIG, LOGGER)
 
 async def async_main():
     """Main async entry point"""
@@ -4023,7 +4321,17 @@ async def async_main():
                     name=f'outbound_{config.name}'
                 )
                 LOGGER.info(f'✓ Started outbound connection task for "{config.name}"')
-    
+
+    # Parse and start OpenBridge (OBP) trunk connections. One bound socket per
+    # OBP; no login/keepalive. Only enabled OBPs are started (validation already
+    # enforced one-OBP-per-TGID across enabled OBPs).
+    openbridge_configs = parse_openbridge_connections()
+    if openbridge_configs and protocols:
+        primary_protocol = protocols[0]
+        for config in openbridge_configs:
+            if config.enabled:
+                await primary_protocol._start_openbridge(config, loop)
+
     # Setup signal handlers (Linux/Unix native asyncio pattern)
     shutdown_event = asyncio.Event()
     
