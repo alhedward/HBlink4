@@ -106,6 +106,35 @@ def test_talkgroup_store_adds_new_tgs_and_preserves_secrets(tmp_path):
     assert json.loads(backup.read_text()) == sample_hblink_config()
 
 
+def test_full_config_backup_and_restore_preserves_complete_file(tmp_path):
+    path = write_config(tmp_path)
+    store = TalkgroupConfigStore(path)
+    original = path.read_bytes()
+
+    exported, revision = store.export_full_config()
+    assert exported == original
+    assert revision == store.load_for_editor()["revision"]
+    assert b"do-not-leak-or-change" in exported
+
+    replacement = sample_hblink_config()
+    replacement["global"]["port_ipv4"] = 62099
+    replacement["repeater_configurations"]["patterns"][0]["config"]["passphrase"] = "restored-secret"
+    replacement_raw = (json.dumps(replacement, indent=2) + "\n").encode()
+
+    editor = store.restore_full_config(replacement_raw)
+    assert path.read_bytes() == replacement_raw
+    assert path.with_suffix(".json.bak").read_bytes() == original
+    assert json.loads(path.read_text())["global"]["port_ipv4"] == 62099
+    assert "passphrase" not in json.dumps(editor)
+
+
+def test_full_config_restore_rejects_non_hblink_json(tmp_path):
+    path = write_config(tmp_path)
+    store = TalkgroupConfigStore(path)
+    with pytest.raises(TalkgroupConfigError):
+        store.restore_full_config(b'{"not_hblink": true}\n')
+
+
 def test_talkgroup_store_rejects_stale_revision(tmp_path):
     path = write_config(tmp_path)
     store = TalkgroupConfigStore(path)
@@ -170,7 +199,7 @@ def test_public_dashboard_config_does_not_expose_admin(monkeypatch):
     assert "password_hash" not in json.dumps(result)
 
 
-def _request(path, cookie=None, csrf=None):
+def _request(path, cookie=None, csrf=None, method="POST", body=b"", content_type=None):
     from starlette.requests import Request
 
     headers = []
@@ -178,11 +207,25 @@ def _request(path, cookie=None, csrf=None):
         headers.append((b"cookie", cookie.encode("ascii")))
     if csrf:
         headers.append((b"x-csrf-token", csrf.encode("ascii")))
+    if body:
+        headers.append((b"content-length", str(len(body)).encode("ascii")))
+    if content_type:
+        headers.append((b"content-type", content_type.encode("ascii")))
+
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
     return Request(
         {
             "type": "http",
             "http_version": "1.1",
-            "method": "POST",
+            "method": method,
             "scheme": "http",
             "path": path,
             "raw_path": path.encode("ascii"),
@@ -190,7 +233,8 @@ def _request(path, cookie=None, csrf=None):
             "headers": headers,
             "client": ("127.0.0.1", 12345),
             "server": ("testserver", 80),
-        }
+        },
+        receive=receive,
     )
 
 
@@ -234,6 +278,20 @@ def test_admin_api_login_requires_session_and_csrf_for_save(tmp_path, monkeypatc
     token = cookies[server.ADMIN_COOKIE_NAME].value
     cookie_header = f"{server.ADMIN_COOKIE_NAME}={token}"
 
+    with pytest.raises(HTTPException) as backup_required:
+        asyncio.run(
+            server.admin_get_talkgroups(_request("/api/admin/talkgroups", cookie=cookie_header))
+        )
+    assert backup_required.value.status_code == 428
+
+    backup_response = asyncio.run(
+        server.admin_download_config_backup(
+            _request("/api/admin/config-backup", cookie=cookie_header)
+        )
+    )
+    assert "attachment;" in backup_response.headers["content-disposition"]
+    assert b"do-not-leak-or-change" in backup_response.body
+
     editor_data = asyncio.run(
         server.admin_get_talkgroups(_request("/api/admin/talkgroups", cookie=cookie_header))
     )
@@ -268,3 +326,20 @@ def test_admin_api_login_requires_session_and_csrf_for_save(tmp_path, monkeypatc
     )
     assert result["ok"] is True
     assert 91 in json.loads(path.read_text())["repeater_configurations"]["patterns"][0]["config"]["slot1_talkgroups"]
+
+    restored_config = sample_hblink_config()
+    restored_config["global"]["port_ipv4"] = 62100
+    restored_raw = (json.dumps(restored_config, indent=2) + "\n").encode()
+    restore_result = asyncio.run(
+        server.admin_restore_config(
+            _request(
+                "/api/admin/config-restore",
+                cookie=cookie_header,
+                csrf=csrf,
+                body=restored_raw,
+                content_type="application/json",
+            )
+        )
+    )
+    assert restore_result["ok"] is True
+    assert json.loads(path.read_text())["global"]["port_ipv4"] == 62100

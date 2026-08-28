@@ -13,11 +13,11 @@ import ipaddress
 import hmac
 import signal
 import atexit
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from collections import deque
 from typing import Dict, List, Set, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Body
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
@@ -130,6 +130,7 @@ ADMIN_COOKIE_NAME = "hblink4_admin_session"
 admin_config = dashboard_config.get("admin", {}) or {}
 admin_sessions = AdminSessionManager(admin_config.get("session_timeout_minutes", 60))
 login_limiter = LoginRateLimiter()
+MAX_CONFIG_UPLOAD_BYTES = 2 * 1024 * 1024
 
 
 def _admin_password_hash() -> str:
@@ -166,6 +167,14 @@ def _talkgroup_store() -> TalkgroupConfigStore:
     if not path.is_absolute():
         path = (Path(__file__).parent / path).resolve()
     return TalkgroupConfigStore(path, backup_on_save=admin_config.get("backup_on_save", True))
+
+
+def _require_config_backup(session) -> None:
+    if not session.config_backup_confirmed:
+        raise HTTPException(
+            status_code=428,
+            detail="Download the current HBlink4 config backup before editing or restoring configuration",
+        )
 
 
 def _restart_controller() -> RestartController:
@@ -1036,6 +1045,8 @@ async def admin_status(request: Request):
     if session is not None:
         result["username"] = session.username
         result["csrf_token"] = session.csrf_token
+        result["config_backup_downloaded"] = bool(session.config_backup_revision)
+        result["config_backup_ready"] = bool(session.config_backup_confirmed)
     return result
 
 
@@ -1102,14 +1113,83 @@ async def admin_logout(request: Request):
     return response
 
 
-@app.get("/api/admin/talkgroups")
-async def admin_get_talkgroups(request: Request):
-    """Return the editable repeater talkgroup ACLs only."""
-    _admin_session(request)
+@app.get("/api/admin/config-backup")
+async def admin_download_config_backup(request: Request):
+    """Download the complete HBlink4 config as the required pre-edit backup."""
+    session = _admin_session(request)
     try:
-        return _talkgroup_store().load_for_editor()
+        raw, revision = _talkgroup_store().export_full_config()
     except TalkgroupConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    session.config_backup_revision = revision
+    session.config_backup_confirmed = False
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"hblink4-config-{timestamp}.json"
+    logger.info("Dashboard admin %s downloaded a full HBlink4 config backup", session.username)
+    return Response(
+        content=raw,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@app.get("/api/admin/talkgroups")
+async def admin_get_talkgroups(request: Request):
+    """Return editable ACLs only after the current config has been downloaded."""
+    session = _admin_session(request)
+    if not session.config_backup_revision:
+        _require_config_backup(session)
+    try:
+        result = _talkgroup_store().load_for_editor()
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if result["revision"] != session.config_backup_revision:
+        session.config_backup_revision = None
+        session.config_backup_confirmed = False
+        raise HTTPException(
+            status_code=428,
+            detail="HBlink4 config changed after the backup download; download a fresh backup before editing",
+        )
+    session.config_backup_confirmed = True
+    return result
+
+
+@app.post("/api/admin/config-restore")
+async def admin_restore_config(request: Request):
+    """Restore a complete HBlink4 config from an authenticated uploaded backup."""
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    _require_config_backup(session)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_CONFIG_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Uploaded config exceeds the 2 MiB limit")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+
+    raw = await request.body()
+    if len(raw) > MAX_CONFIG_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded config exceeds the 2 MiB limit")
+
+    try:
+        restored = _talkgroup_store().restore_full_config(raw)
+    except TalkgroupConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.warning("Dashboard admin %s restored the complete HBlink4 configuration", session.username)
+    return {
+        "ok": True,
+        "restart_required": True,
+        "configuration": restored,
+    }
 
 
 @app.put("/api/admin/talkgroups")
@@ -1117,6 +1197,7 @@ async def admin_save_talkgroups(request: Request, payload: dict = Body(...)):
     """Atomically update repeater talkgroup ACLs in config/config.json."""
     session = _admin_session(request)
     _require_csrf(request, session)
+    _require_config_backup(session)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 

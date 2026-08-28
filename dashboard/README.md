@@ -186,10 +186,11 @@ Same as HBlink4: GNU GPLv3
 ## Administrator Talkgroup Editor
 
 The dashboard has an optional authenticated administration page at `/admin` for
-editing repeater talkgroup ACLs in `config/config.json`. The editor exposes only
+editing repeater talkgroup ACLs in `config/config.json`. The editor projection exposes only
 `slot1_talkgroups` and `slot2_talkgroups` from repeater patterns and the optional
-default repeater configuration. Repeater passphrases and other HBlink4 settings
-are never returned to the browser.
+default repeater configuration. Before the editor unlocks, the administrator must
+download a complete config backup. That explicit backup contains passphrases and
+all other HBlink4 settings, so it must be stored securely.
 
 Administration is disabled by default. Generate a password hash interactively:
 
@@ -229,17 +230,24 @@ The talkgroup editor preserves HBlink4's ACL semantics:
 - `[]` = deny all talkgroups
 - `[91, 505, ...]` = allow only the listed talkgroups
 
-New TG IDs can be added individually or in comma/space-separated groups. Saves
-are revision checked, validated with HBlink4's repeater matcher, written
+New TG IDs can be added individually or in comma/space-separated groups. Each
+administrator login session is gated until `/api/admin/config-backup` has
+downloaded the current complete config and the editor verifies that revision.
+Saves are revision checked, validated with HBlink4's repeater matcher, written
 atomically, and (by default) retain the previous file as `config.json.bak`.
-HBlink4 must be restarted before a saved ACL change is active.
+
+The same admin page can restore one of those complete JSON backups after a rebuild.
+Restore is authenticated, CSRF-protected, limited to 2 MiB, validates the HBlink4
+repeater configuration structure, and atomically replaces the live file while
+retaining the previous live config as `config.json.bak`. HBlink4 must be restarted
+before saved or restored configuration becomes active.
 
 ### Dashboard restart permission
 
 The browser cannot supply a shell command. The server runs only the fixed
 `admin.restart.command` configured locally and verifies the service with the
-fixed status command. For the supplied systemd services, install the included
-Polkit rule so the `cort` dashboard user can restart only `hblink4.service`:
+fixed status command. On systems with a Polkit version that supports JavaScript `.rules`, the supplied
+rule can authorize the `cort` dashboard user to restart only `hblink4.service`:
 
 ```bash
 sudo cp hblink4-dashboard-restart.rules /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
@@ -248,5 +256,7 @@ sudo chmod 0644 /etc/polkit-1/rules.d/50-hblink4-dashboard-restart.rules
 ```
 
 If the dashboard service runs under another account, change `subject.user` in
-the rule before installing it. Do not replace this with unrestricted passwordless
+the rule before installing it. Ubuntu 22.04 ships an older Polkit implementation
+that does not consume these JavaScript `.rules`; deployments on that release need
+a narrowly scoped helper instead. Do not replace this with unrestricted passwordless
 `sudo` access.

@@ -1,7 +1,8 @@
 """Administrative helpers for the HBlink4 dashboard.
 
-The dashboard admin surface intentionally exposes only repeater talkgroup ACLs.
-Passphrases and the rest of config/config.json never leave the server.
+The talkgroup editor exposes only repeater ACL fields. A separate authenticated
+backup endpoint may intentionally download/restore the complete HBlink4 config
+for disaster recovery.
 """
 
 from __future__ import annotations
@@ -90,6 +91,8 @@ class AdminSession:
     username: str
     csrf_token: str
     expires_at: float
+    config_backup_revision: Optional[str] = None
+    config_backup_confirmed: bool = False
 
 
 class AdminSessionManager:
@@ -236,6 +239,49 @@ class TalkgroupConfigStore:
                 config.get("slot2_talkgroups"), "slot2_talkgroups"
             ),
         }
+
+    def export_full_config(self) -> Tuple[bytes, str]:
+        """Return the complete config bytes and revision for an admin backup."""
+        raw, _config, revision, _section_key = self._read()
+        return raw, revision
+
+    def restore_full_config(self, replacement_raw: bytes) -> dict:
+        """Atomically restore a complete validated HBlink4 JSON configuration."""
+        if not isinstance(replacement_raw, bytes) or not replacement_raw:
+            raise TalkgroupConfigError("Uploaded HBlink4 config is empty")
+
+        old_raw, _old_config, _old_revision, _old_section_key = self._read()
+        try:
+            restored = json.loads(replacement_raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise TalkgroupConfigError(f"Uploaded HBlink4 config is not valid JSON: {exc}") from exc
+        if not isinstance(restored, dict):
+            raise TalkgroupConfigError("Uploaded HBlink4 config root must be a JSON object")
+
+        if "repeater_configurations" in restored:
+            section_key = "repeater_configurations"
+        elif "repeaters" in restored:
+            section_key = "repeaters"
+        else:
+            raise TalkgroupConfigError("Uploaded HBlink4 config has no repeater_configurations section")
+        global_config = restored.get("global")
+        if not isinstance(global_config, dict) or "bind_ipv4" not in global_config or "port_ipv4" not in global_config:
+            raise TalkgroupConfigError("Uploaded HBlink4 config is missing required global bind_ipv4/port_ipv4 settings")
+
+        section = restored.get(section_key)
+        if not isinstance(section, dict) or not isinstance(section.get("patterns", []), list):
+            raise TalkgroupConfigError(f"Uploaded {section_key}.patterns must be a list")
+        for index, pattern in enumerate(section.get("patterns", [])):
+            if not isinstance(pattern, dict) or not isinstance(pattern.get("config"), dict):
+                raise TalkgroupConfigError(f"Uploaded pattern {index} has an invalid config object")
+            self._slot_payload(pattern["config"])
+        if "default" in section:
+            if not isinstance(section["default"], dict):
+                raise TalkgroupConfigError(f"Uploaded {section_key}.default must be a JSON object")
+            self._slot_payload(section["default"])
+
+        self._atomic_replace(old_raw, replacement_raw)
+        return self.load_for_editor()
 
     def load_for_editor(self) -> dict:
         raw, config, revision, section_key = self._read()

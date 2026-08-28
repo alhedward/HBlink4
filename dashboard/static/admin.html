@@ -67,9 +67,12 @@
             border-top: 1px solid #334155; padding: 13px 0; margin-top: 22px;
         }
         .warning { color: #fbbf24; }
+        .backup-warning { border-left: 4px solid #f59e0b; padding-left: 12px; }
+        .file-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; margin-top: 12px; }
+        .file-row input[type="file"] { padding: 8px; }
         .hidden { display: none !important; }
         @media (max-width: 760px) {
-            .slots { grid-template-columns: 1fr; }
+            .slots, .file-row { grid-template-columns: 1fr; }
             header { align-items: flex-start; flex-direction: column; }
             .top-actions { justify-content: flex-start; }
         }
@@ -109,6 +112,18 @@
         </form>
     </section>
 
+    <section id="backupPanel" class="card hidden">
+        <h2>Backup required before configuration changes</h2>
+        <div class="backup-warning">
+            <p><strong>Download the current complete HBlink4 config before editing or restoring anything.</strong></p>
+            <p class="subtle">This backup includes repeater passphrases and other sensitive settings. Store it securely. The editor remains locked until this download has been requested for the current login session.</p>
+        </div>
+        <div class="actions" style="margin-top: 16px;">
+            <a id="requiredBackupBtn" class="button-link" href="/api/admin/config-backup" download>Download current config backup</a>
+            <span id="backupHint" class="subtle"></span>
+        </div>
+    </section>
+
     <main id="editorPanel" class="hidden">
         <div class="card">
             <strong>Talkgroup ACL editor</strong>
@@ -116,6 +131,20 @@
                 Each slot can allow all talkgroups, deny all talkgroups, or allow a specific list.
                 Saving changes updates the HBlink4 JSON config but does not alter passphrases or pattern matching rules.
             </p>
+        </div>
+        <div class="card">
+            <strong>Full configuration backup &amp; restore</strong>
+            <p class="subtle">Download another complete backup at any time, or restore a previously downloaded HBlink4 config after a rebuild. Restoring replaces the complete config and requires an HBlink4 restart.</p>
+            <div class="actions">
+                <a id="downloadAgainBtn" class="button-link secondary" href="/api/admin/config-backup" download>Download current config</a>
+            </div>
+            <div class="file-row">
+                <div>
+                    <label for="restoreFile">Restore complete config from backup</label>
+                    <input id="restoreFile" type="file" accept="application/json,.json">
+                </div>
+                <button id="restoreBtn" class="danger" type="button">Restore uploaded config</button>
+            </div>
         </div>
         <div id="patterns"></div>
         <div id="defaultContainer"></div>
@@ -137,6 +166,7 @@
         csrf: null,
         data: null,
         restartEnabled: false,
+        backupReady: false,
         busy: false
     };
 
@@ -168,9 +198,16 @@
 
     function setBusy(busy) {
         state.busy = busy;
-        ['saveBtn', 'saveRestartBtn', 'restartBtn', 'logoutBtn'].forEach(id => {
+        ['saveBtn', 'saveRestartBtn', 'restartBtn', 'restoreBtn', 'logoutBtn'].forEach(id => {
             const el = $(id);
             if (el) el.disabled = busy || (id === 'restartBtn' && !state.restartEnabled) || (id === 'saveRestartBtn' && !state.restartEnabled);
+        });
+        ['requiredBackupBtn', 'downloadAgainBtn'].forEach(id => {
+            const el = $(id);
+            if (el) {
+                el.style.pointerEvents = busy ? 'none' : '';
+                el.style.opacity = busy ? '0.5' : '';
+            }
         });
     }
 
@@ -371,7 +408,9 @@
     async function loadEditor() {
         state.data = await api('/api/admin/talkgroups');
         renderEditor();
+        state.backupReady = true;
         $('editorPanel').classList.remove('hidden');
+        $('backupPanel').classList.add('hidden');
         $('loginPanel').classList.add('hidden');
         $('setupPanel').classList.add('hidden');
         $('logoutBtn').classList.remove('hidden');
@@ -385,19 +424,89 @@
         if (!status.enabled || !status.configured) {
             $('setupPanel').classList.remove('hidden');
             $('loginPanel').classList.add('hidden');
+            $('backupPanel').classList.add('hidden');
             $('editorPanel').classList.add('hidden');
             return;
         }
         if (!status.authenticated) {
+            state.backupReady = false;
             $('loginPanel').classList.remove('hidden');
             $('setupPanel').classList.add('hidden');
+            $('backupPanel').classList.add('hidden');
             $('editorPanel').classList.add('hidden');
             $('logoutBtn').classList.add('hidden');
             return;
         }
         state.csrf = status.csrf_token;
+        $('logoutBtn').classList.remove('hidden');
+        if (!status.config_backup_ready) {
+            state.backupReady = false;
+            $('backupPanel').classList.remove('hidden');
+            $('editorPanel').classList.add('hidden');
+            $('loginPanel').classList.add('hidden');
+            $('setupPanel').classList.add('hidden');
+            $('backupHint').textContent = status.config_backup_downloaded
+                ? 'Backup request received; verifying the downloaded revision…'
+                : 'The editor is locked until the backup is downloaded.';
+            if (status.config_backup_downloaded) {
+                try {
+                    await loadEditor();
+                } catch (error) {
+                    if (error.status !== 428) throw error;
+                    $('backupHint').textContent = error.message;
+                }
+            }
+            setBusy(false);
+            return;
+        }
         await loadEditor();
         setBusy(false);
+    }
+
+    async function waitForBackupUnlock() {
+        $('backupHint').textContent = 'Download started; unlocking editor…';
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            const status = await api('/api/admin/status');
+            if (status.config_backup_downloaded) {
+                state.csrf = status.csrf_token;
+                try {
+                    await loadEditor();
+                    showMessage('Safety backup downloaded. Configuration editing is now unlocked.', 'success');
+                    return;
+                } catch (error) {
+                    if (error.status === 428) {
+                        $('backupHint').textContent = error.message;
+                        return;
+                    }
+                    throw error;
+                }
+            }
+        }
+        $('backupHint').textContent = 'The backup request was not confirmed. Try the download again.';
+    }
+
+    function backupLinkClicked() {
+        setTimeout(() => withBusy(waitForBackupUnlock), 100);
+    }
+
+    async function restoreConfiguration() {
+        const file = $('restoreFile').files[0];
+        if (!file) throw new Error('Choose an HBlink4 JSON backup file to restore');
+        if (file.size > 2 * 1024 * 1024) throw new Error('Config backup exceeds the 2 MiB upload limit');
+        const raw = await file.text();
+        try { JSON.parse(raw); } catch (_) { throw new Error('Selected file is not valid JSON'); }
+        if (!window.confirm('Restore this complete HBlink4 configuration? This replaces the live config. The safety backup you downloaded remains your rollback copy.')) return;
+
+        const result = await api('/api/admin/config-restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+            body: raw
+        });
+        state.data = result.configuration;
+        renderEditor();
+        $('restoreFile').value = '';
+        showMessage('Complete HBlink4 configuration restored. Restart HBlink4 to apply it.', 'success');
     }
 
     async function saveConfiguration() {
@@ -440,6 +549,10 @@
         }
     }
 
+    $('requiredBackupBtn').addEventListener('click', backupLinkClicked);
+    $('downloadAgainBtn').addEventListener('click', backupLinkClicked);
+    $('restoreBtn').addEventListener('click', () => withBusy(restoreConfiguration));
+
     $('loginForm').addEventListener('submit', event => {
         event.preventDefault();
         withBusy(async () => {
@@ -465,6 +578,7 @@
         await api('/api/admin/logout', { method: 'POST', headers: { 'X-CSRF-Token': state.csrf } });
         state.csrf = null;
         state.data = null;
+        state.backupReady = false;
         clearMessage();
         await refreshStatus();
     }));
