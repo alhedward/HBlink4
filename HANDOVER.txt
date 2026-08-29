@@ -37,8 +37,11 @@ Admin onboarding and optional MFA
 - Optional TOTP authenticator-app MFA can be enrolled, verified and disabled by Cognito administrators. Pool-level MFA remains OPTIONAL.
 - FIDO2/WebAuthn security-key/passkey registration, listing/removal and sign-in use Cognito USER_AUTH/WEB_AUTHN and support YubiKey/platform passkeys.
 - WebAuthn browser ceremonies remain native navigator.credentials operations. HBlink4 never receives or stores authenticator private keys.
+- Cognito can retain TOTP and one or more WebAuthn credentials for the same administrator account; the UI reports those methods independently.
+- Once at least one MFA/security-key method is configured, the account-security card collapses to a compact summary and Change MFA button. Expanding it exposes TOTP and WebAuthn management controls; Done collapses it again.
 - Cognito administrator profile cleanup uses standard attributes: given_name, family_name, nickname (callsign), plus existing email.
 - Missing first name, last name or callsign can be collected and saved before an administrator sends an invitation.
+- Once first name, last name, callsign and email are present, the profile card collapses to an identity summary and Change administrator profile button. Incomplete profiles remain expanded until completed.
 - Personalised invitations collect invitee first name, last name, callsign and email and store those values in Cognito standard attributes.
 - Dashboard invitations suppress Cognito stock invite delivery, create the temporary password server-side, and send a personalised SES multipart HTML/plain-text email.
 - Invitation sender is HBLINK4_ADMIN_INVITE_FROM; production is webmaster@sgars.vk2ale.com.
@@ -52,8 +55,9 @@ Invite feedback follow-up
 - This ambiguity can cause an administrator to click Send invitation a second time because there is no local confirmation that the first request completed.
 - Branch fix/admin-invite-feedback adds dashboard/static/admin_invite_feedback.js.
 - The helper places an aria-live status beside Send invitation, changes the button to Sending... while the request is active, mirrors success/failure locally, clears all invitee fields on confirmed success, and changes the button to Send another invitation.
-- dashboard/admin_app.py now cache-busts the injected admin helper scripts and loads the invite-feedback helper before admin_identity.js so browsers cannot retain an older invitation handler after deployment.
-- Static regression coverage is in tests/test_admin_invite_feedback.py.
+- dashboard/admin_app.py cache-busts all injected admin helper scripts so browsers cannot retain stale invitation/MFA/profile code after deployment.
+- dashboard/static/admin_profile_compact.js provides the completed-profile collapse without changing Cognito profile storage or invitation semantics.
+- Static regression coverage is in tests/test_admin_invite_feedback.py, including invitation feedback, compact completed profile, compact configured MFA and WebAuthn count integration.
 
 Production infrastructure state
 -------------------------------
@@ -77,8 +81,9 @@ Next steps
 4. Run full hblink-website Terraform/safety CI and production CD. Reject any unexpected infrastructure changes.
 5. Verify production remains green on i-0818c2b22deb877c3 and EIP 54.206.153.208.
 6. Retest Send invitation: visible Sending... state, visible success beside the form, cleared invitee fields, and Send another invitation button text.
-7. Confirm duplicate user behaviour is explicit if an administrator attempts to invite the same Cognito username/email again.
-8. Continue testing TOTP and WebAuthn/YubiKey flows independently.
+7. Verify completed administrator profile and configured MFA both collapse to compact Change controls, while incomplete/unconfigured states remain editable.
+8. Confirm duplicate user behaviour is explicit if an administrator attempts to invite the same Cognito username/email again.
+9. Continue testing TOTP and WebAuthn/YubiKey flows independently.
 
 Outstanding roadmap
 -------------------
