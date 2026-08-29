@@ -195,6 +195,7 @@ def test_public_dashboard_config_does_not_expose_admin(monkeypatch):
     )
     result = asyncio.run(server.get_config())
     assert result["dashboard_title"] == "Test"
+    assert result["dashboard_version"] == server.DASHBOARD_VERSION
     assert "admin" not in result
     assert "password_hash" not in json.dumps(result)
 
@@ -372,3 +373,57 @@ def test_admin_api_login_requires_session_and_csrf_for_save(tmp_path, monkeypatc
     )
     assert restore_result["ok"] is True
     assert json.loads(path.read_text())["global"]["port_ipv4"] == 62100
+
+
+def test_cognito_login_uses_existing_local_session_layer(monkeypatch):
+    from http.cookies import SimpleCookie
+    from types import SimpleNamespace
+    from dashboard.admin import AdminSessionManager, LoginRateLimiter
+
+    class FakeCognitoAuth:
+        def authenticate(self, username, password):
+            assert username == "tony@example.com"
+            assert password == "secret"
+            return SimpleNamespace(
+                status="authenticated",
+                identity=SimpleNamespace(username="cognito-tony"),
+                challenge_token=None,
+                required_attributes=(),
+            )
+
+    monkeypatch.setattr(
+        server,
+        "admin_config",
+        {
+            "enabled": True,
+            "auth_provider": "cognito",
+            "cognito": {
+                "region": "ap-southeast-2",
+                "user_pool_id": "ap-southeast-2_test",
+                "client_id": "client123",
+                "admin_group": "HBlink4Admins",
+            },
+            "restart": {"enabled": False},
+        },
+    )
+    monkeypatch.setattr(server, "admin_sessions", AdminSessionManager(60))
+    monkeypatch.setattr(server, "login_limiter", LoginRateLimiter())
+    monkeypatch.setattr(server, "_cognito_auth", FakeCognitoAuth())
+
+    response = asyncio.run(
+        server.admin_login(
+            _request("/api/admin/login"),
+            {"username": "tony@example.com", "password": "secret"},
+        )
+    )
+    body = json.loads(response.body)
+    assert body["ok"] is True
+    assert body["username"] == "cognito-tony"
+    assert body["csrf_token"]
+
+    cookies = SimpleCookie()
+    cookies.load(response.headers["set-cookie"])
+    token = cookies[server.ADMIN_COOKIE_NAME].value
+    session = server.admin_sessions.get(token)
+    assert session.username == "cognito-tony"
+    assert session.csrf_token == body["csrf_token"]

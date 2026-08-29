@@ -68,6 +68,15 @@
             "timeout_seconds": 15,
             "verify_attempts": 6,
             "verify_delay_seconds": 0.5
+        },
+        "auth_provider": "local",
+        "cognito": {
+            "region": "ap-southeast-2",
+            "user_pool_id": "",
+            "client_id": "",
+            "client_secret": "",
+            "admin_group": "HBlink4Admins",
+            "challenge_timeout_minutes": 10
         }
     }
 }

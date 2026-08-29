@@ -1,0 +1,43 @@
+HBlink4 HANDOVER
+================
+Updated: 2026-08-29
+
+Repository
+----------
+Canonical repository: https://github.com/alhedward/HBlink4.git
+Default branch: main
+Current feature work: feature/cognito-admins
+
+Known-good baseline
+-------------------
+- main includes the permanent GitHub Actions full regression workflow merged as 1da1b452e30dd98f4464c529de4b0951e2d7503e.
+- First full Noble/Python 3.12 regression run passed 112/112 tests.
+- Production is still pinned by hblink-website to 3c359e8b566a64ad430eadae088349f68e54f8ee until a later deployment update.
+
+Admin authentication direction
+------------------------------
+- Keep the existing HBlink4 /admin page, local HttpOnly session cookie, CSRF protection, login throttling, mandatory full-config backup gate, and fixed restart authorization.
+- Local PBKDF2 username/password authentication remains supported as auth_provider=local.
+- New auth_provider=cognito uses an Amazon Cognito User Pool behind the same HBlink4 login UI.
+- Required Cognito group: HBlink4Admins (configurable).
+- Cognito provides named users, emailed invitations, temporary-password first login, self-service password reset, admin listing, invite resend, and administrator-triggered password reset.
+- The raw Cognito first-login Session is kept server-side; the browser receives only an opaque short-lived challenge token.
+- Optional Cognito app-client secret is supported and should be supplied via HBLINK4_COGNITO_CLIENT_SECRET, not committed in config.
+
+Cognito deployment work still required in hblink-website
+--------------------------------------------------------
+Provision a User Pool and app client with self-signup disabled, email recovery/invitations, and ALLOW_ADMIN_USER_PASSWORD_AUTH. Create the HBlink4Admins group. Pass region/pool/client settings to dashboard config/environment. If a client secret is used, store it in SSM/another secret path and expose it only to the dashboard service. Grant the EC2 role narrowly scoped Cognito actions required by the dashboard: AdminInitiateAuth, AdminRespondToAuthChallenge, AdminListGroupsForUser, ListUsersInGroup, AdminCreateUser, AdminAddUserToGroup, and AdminResetUserPassword for the production pool.
+
+Outstanding roadmap
+-------------------
+1. Finish/test/merge Cognito multi-admin work, then wire Cognito resources through hblink-website.
+2. Add Parrot service on TG 9990 (implementation details from the other discussion still need to be re-established before coding).
+3. hblink-website cleanup: deploy-helper integration only for hblink-website; maintain root HANDOVER.txt.
+4. Blue lifecycle automation: after successful green cutover, keep blue available for a 3-hour soak/standby window; after one week create a backup/snapshot and terminate blue if green remains healthy.
+5. Deployed-assets cleanup after the cron/lifecycle workflow is established.
+
+Safety notes
+------------
+- Full configuration backups contain passphrases and must be stored securely.
+- Do not expose password hashes, Cognito client secrets, or full config through public dashboard APIs.
+- Preserve the hot-path performance characteristics of HBlink4; administrator calls are control-plane only.

@@ -811,6 +811,7 @@
                 <div>
                     <h1 id="dashboardTitle">HBlink4 Dashboard</h1>
                     <div style="color: #64748b; font-size: 12px; margin-top: 4px;" id="serverName"></div>
+                    <div style="color: #64748b; font-size: 11px; margin-top: 2px;">Dashboard <span id="dashboardVersion">v1.2.0</span></div>
                 </div>
             </div>
             <div class="status-badges">
@@ -1077,6 +1078,7 @@
                 document.title = config.dashboard_title || 'HBlink4 Dashboard';
                 document.getElementById('dashboardTitle').textContent = config.dashboard_title || 'HBlink4 Dashboard';
                 document.getElementById('serverName').textContent = config.server_name || '';
+                document.getElementById('dashboardVersion').textContent = `v${config.dashboard_version || '1.2.0'}`;
                 
                 // Show announcement banner if enabled and text exists
                 if (config.announcement && config.announcement.enabled && config.announcement.text && config.announcement.text.trim()) {
