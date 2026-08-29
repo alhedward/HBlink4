@@ -174,6 +174,7 @@ def test_admin_management_invite_list_and_reset():
     username = auth.invite_admin("NEW@example.com")
     assert username == "new@example.com"
     assert created[-1]["Username"] == "new@example.com"
+    assert {"Name": "email_verified", "Value": "true"} in created[-1]["UserAttributes"]
     assert grouped[-1]["GroupName"] == "HBlink4Admins"
 
     auth.resend_invite("new@example.com")
