@@ -18,6 +18,7 @@ from .cognito_auth import CognitoAuthError, CognitoPasswordError
 
 
 _identity_service_instance = None
+_ADMIN_ASSET_VERSION = "20260829-invite-feedback-2"
 
 
 def _identity_service() -> CognitoAdminIdentityService:
@@ -44,10 +45,13 @@ class AdminIdentityMiddleware:
             await self.app(scope, receive, send)
             return
         html = html_path.read_text(encoding="utf-8")
+        version = _ADMIN_ASSET_VERSION
         scripts = (
-            '\n<script src="/static/admin_mfa.js"></script>'
-            '\n<script src="/static/admin_webauthn.js"></script>'
-            '\n<script src="/static/admin_identity.js"></script>\n'
+            f'\n<script src="/static/admin_mfa.js?v={version}"></script>'
+            f'\n<script src="/static/admin_webauthn.js?v={version}"></script>'
+            f'\n<script src="/static/admin_invite_feedback.js?v={version}"></script>'
+            f'\n<script src="/static/admin_identity.js?v={version}"></script>'
+            f'\n<script src="/static/admin_profile_compact.js?v={version}"></script>\n'
         )
         html = html.replace("</body>", scripts + "</body>")
         await self._send(HTMLResponse(html), scope, receive, send)
