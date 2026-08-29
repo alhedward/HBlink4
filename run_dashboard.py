@@ -23,7 +23,7 @@ if __name__ == '__main__':
     print()
 
     uvicorn.run(
-        "dashboard.security_app:app",
+        "dashboard.admin_app:app",
         host=host,
         port=port,
         log_level="info",
