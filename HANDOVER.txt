@@ -1,100 +1,82 @@
 HBlink4 HANDOVER
 ================
-Updated: 2026-08-29
+Updated: 2026-08-30
 
 Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current feature work: fix/admin-invite-feedback
+Current feature work: feature/parrot-tg9990
 Dashboard semantic version: 1.2.0
 
-Known-good baseline
--------------------
-- main includes the permanent GitHub Actions full regression workflow merged as 1da1b452e30dd98f4464c529de4b0951e2d7503e.
-- Permanent local PBKDF2 break-glass support is merged on main as 6eedec8af37aa2efc8321a403d88ef473d20c16c.
-- Admin onboarding, personalised SES invitations, optional TOTP and WebAuthn/FIDO2 are merged on main as 062e3d2960b3880948a0b8f63bfdfb10070b1e70.
-- PR #6 full Python 3.12 regression run passed 130 tests after the panel, TOTP, WebAuthn, profile and personalised-invitation changes.
-- hblink-website production currently pins HBlink4 to 062e3d2960b3880948a0b8f63bfdfb10070b1e70.
-- Production dashboard authentication is Cognito, with the exact configured legacy local username retained as the permanent PBKDF2 break-glass account.
-- The first production Cognito administrator completed the temporary-password first-login flow successfully.
-- Dashboard semantic version 1.2.0 is exposed through /api/config and shown on both public and administrator dashboards.
+Known-good production baseline
+------------------------------
+- main is 8f558fc07a9a18c6def9f71a1528ebe2559ae14e (PR #7, administrator UX follow-up).
+- PR #7 passed the complete Python 3.12 regression suite with 135 tests before merge.
+- hblink-website production pins that revision and Production CD completed successfully on 2026-08-29.
+- Production is green on i-0818c2b22deb877c3 with EIP 54.206.153.208.
+- Terraform active_color is green; the last application-only deployment changed 0 infrastructure resources.
+- Dashboard authentication is Cognito, with the exact configured local PBKDF2 account retained as the permanent break-glass path.
+- Cognito MFA remains OPTIONAL with TOTP enabled and WebAuthn RP dmr.vk2ale.com using MULTI_FACTOR_WITH_USER_VERIFICATION.
+- Administrator invitation feedback, compact completed profile and compact configured MFA/WebAuthn controls are deployed.
 
-Admin authentication
---------------------
-- Existing HBlink4 /admin page remains the administrator entry point.
-- Existing local HttpOnly session cookie, CSRF protection, login throttling, mandatory full-config backup gate, config restore protection and fixed restart authorization remain in place.
-- auth_provider=cognito uses Amazon Cognito for named administrators and retains the configured local username/password hash as a reserved break-glass path.
-- The exact local break-glass username is authenticated locally and is never sent to Cognito. A failed password for that reserved username does not fall through to Cognito.
-- Cognito administrators must belong to the configurable HBlink4Admins group.
-- Cognito challenge sessions remain server-side; browser challenge tokens are opaque and short-lived.
-- Cognito access tokens used for self-service security/profile operations are stored only in the existing in-memory administrator session, never browser JavaScript or persistent files.
-- dashboard/admin_app.py is the top-level ASGI application. It composes the password/break-glass/TOTP layer, WebAuthn security-key layer and administrator profile/invitation layer.
+Authentication and administrator controls
+-----------------------------------------
+- /admin uses Cognito for named administrators and retains the configured local username/password hash as a reserved local break-glass path.
+- The reserved local username is never sent to Cognito; a failed password for that username never falls through to Cognito.
+- Cognito administrators must belong to HBlink4Admins.
+- Cognito access/challenge tokens remain server-side behind the existing HttpOnly/CSRF session layer.
+- Optional TOTP and WebAuthn/YubiKey/passkey management are available to Cognito administrators.
+- Completed administrator profile and configured MFA/security-key panels collapse to compact Change controls.
+- Personalized administrator invitations use SES from webmaster@sgars.vk2ale.com and clear the invite form with local success/failure feedback after submission.
 
-Admin onboarding and optional MFA
----------------------------------
-- NEW_PASSWORD_REQUIRED completion tears down the permanent-password panel as soon as an authenticated session exists.
-- Optional TOTP authenticator-app MFA can be enrolled, verified and disabled by Cognito administrators. Pool-level MFA remains OPTIONAL.
-- FIDO2/WebAuthn security-key/passkey registration, listing/removal and sign-in use Cognito USER_AUTH/WEB_AUTHN and support YubiKey/platform passkeys.
-- WebAuthn browser ceremonies remain native navigator.credentials operations. HBlink4 never receives or stores authenticator private keys.
-- Cognito can retain TOTP and one or more WebAuthn credentials for the same administrator account; the UI reports those methods independently.
-- Once at least one MFA/security-key method is configured, the account-security card collapses to a compact summary and Change MFA button. Expanding it exposes TOTP and WebAuthn management controls; Done collapses it again.
-- Cognito administrator profile cleanup uses standard attributes: given_name, family_name, nickname (callsign), plus existing email.
-- Missing first name, last name or callsign can be collected and saved before an administrator sends an invitation.
-- Once first name, last name, callsign and email are present, the profile card collapses to an identity summary and Change administrator profile button. Incomplete profiles remain expanded until completed.
-- Personalised invitations collect invitee first name, last name, callsign and email and store those values in Cognito standard attributes.
-- Dashboard invitations suppress Cognito stock invite delivery, create the temporary password server-side, and send a personalised SES multipart HTML/plain-text email.
-- Invitation sender is HBLINK4_ADMIN_INVITE_FROM; production is webmaster@sgars.vk2ale.com.
-- Invitation email includes https://dmr.vk2ale.com/admin, temporary credentials, 12-character permanent-password rules, 7-day temporary-password validity, optional MFA information, and the inviting administrator's name/callsign signature. Reply-To is the inviter's Cognito email.
-- The local PBKDF2 break-glass account intentionally has no Cognito profile/MFA requirement and cannot sign personalised Cognito invitations.
-- RF/core routing code remains unchanged.
-
-Invite feedback follow-up
--------------------------
-- Production testing on 2026-08-29 exposed a UX bug after a personalised invitation was sent: the invitee fields remained populated and the only success indication was the global message banner at the top of the page, outside the invite form viewport.
-- This ambiguity can cause an administrator to click Send invitation a second time because there is no local confirmation that the first request completed.
-- Branch fix/admin-invite-feedback adds dashboard/static/admin_invite_feedback.js.
-- The helper places an aria-live status beside Send invitation, changes the button to Sending... while the request is active, mirrors success/failure locally, clears all invitee fields on confirmed success, and changes the button to Send another invitation.
-- dashboard/admin_app.py cache-busts all injected admin helper scripts so browsers cannot retain stale invitation/MFA/profile code after deployment.
-- dashboard/static/admin_profile_compact.js provides the completed-profile collapse without changing Cognito profile storage or invitation semantics.
-- Static regression coverage is in tests/test_admin_invite_feedback.py, including invitation feedback, compact completed profile, compact configured MFA and WebAuthn count integration.
+Parrot / echo feature work
+--------------------------
+- Branch feature/parrot-tg9990 adds an in-process local DMR parrot service, based on the classic HBlink3 playback behaviour but without running a second legacy HBLink daemon.
+- hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence to the originating repeater/hotspot at the configured cadence after a proper voice terminator.
+- run.py installs the isolated parrot hooks on HBProtocol before starting the normal core.
+- The parrot is configurable through a top-level `parrot` object. Generic sample defaults are disabled, TG9990, 2-second delay, 60-ms packet cadence and 120-second recording cap.
+- When enabled, the configured parrot TG is accepted as a local service even when absent from the normal repeater TG allow-list.
+- The parrot TG receives an empty normal route cache: it is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
+- A numerically identical TG received from an external trunk does not invoke the local parrot.
+- Local-to-network DMRD translation is respected, so a local RF alias can map to canonical TG9990.
+- Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
+- Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
+- Regression coverage is in tests/test_parrot.py; operator documentation is docs/parrot.md.
+- Production enablement will be done through hblink-website policy reconciliation after this HBlink4 branch passes CI and is merged.
 
 Production infrastructure state
 -------------------------------
-- Production is green on i-0818c2b22deb877c3 with EIP 54.206.153.208.
-- Cognito user pool ap-southeast-2_RQFyaaiHA is on Essentials with OPTIONAL MFA.
-- TOTP is enabled.
-- WebAuthn RP is dmr.vk2ale.com with user verification required; passkey factor mode is MULTI_FACTOR_WITH_USER_VERIFICATION.
-- Cognito client 4mtpo5ea7u75ous0s5q717k2um allows USER_AUTH/WebAuthn while retaining the password admin auth path.
-- SES production access is enabled in ap-southeast-2.
-- sgars.vk2ale.com SES verification/DKIM and bounce.sgars.vk2ale.com MAIL FROM are managed by hblink-website Terraform/Route 53 state.
-- Cognito recovery/reset email and dashboard invitations use webmaster@sgars.vk2ale.com.
-- Cognito password policy is 12+ characters with uppercase, lowercase and number required; symbols are optional.
-- Cognito temporary invitation passwords are valid for 7 days.
-- The local PBKDF2 break-glass credential remains retained through the root-only deployment environment/SSM path.
+- FQDN: dmr.vk2ale.com
+- Production EIP: 54.206.153.208
+- Green production instance: i-0818c2b22deb877c3
+- Blue rollback instance: i-001521c2029b3ad6a
+- Cognito user pool: ap-southeast-2_RQFyaaiHA
+- Cognito no-secret client: 4mtpo5ea7u75ous0s5q717k2um
+- Cognito administrator group: HBlink4Admins
+- SES sender: webmaster@sgars.vk2ale.com
+- The local PBKDF2 break-glass credential remains retained through the root-only deployment environment/SSM path and must never be exposed.
 
-Next steps
-----------
-1. Run the complete HBlink4 Python 3.12 regression workflow for fix/admin-invite-feedback.
+Deployment plan for parrot
+--------------------------
+1. Run the complete HBlink4 Python 3.12 regression suite on feature/parrot-tg9990.
 2. Merge only after the final branch head is green.
-3. Update hblink-website on a feature branch to pin the resulting merged HBlink4 revision only; do not change Cognito/SES/EC2/EIP configuration for this UI-only follow-up.
-4. Run full hblink-website Terraform/safety CI and production CD. Reject any unexpected infrastructure changes.
-5. Verify production remains green on i-0818c2b22deb877c3 and EIP 54.206.153.208.
-6. Retest Send invitation: visible Sending... state, visible success beside the form, cleared invitee fields, and Send another invitation button text.
-7. Verify completed administrator profile and configured MFA both collapse to compact Change controls, while incomplete/unconfigured states remain editable.
-8. Confirm duplicate user behaviour is explicit if an administrator attempts to invite the same Cognito username/email again.
-9. Continue testing TOTP and WebAuthn/YubiKey flows independently.
+3. In hblink-website, pin the merged HBlink4 revision and extend the canonical policy/reconciliation path to set `parrot.enabled=true` on TG9990 without changing stored HomeBrew passphrases or upstream links.
+4. Run full hblink-website Terraform/safety CI. The Terraform plan must contain no EC2, EIP, Cognito, SES, DNS or other infrastructure mutation beyond the HBlink4 revision output if applicable.
+5. Deploy steady-state to existing production green and verify the core/dashboard/Caddy services remain healthy and the EIP stays on green.
+6. RF-test TG9990 from a connected repeater/hotspot: key, speak, unkey normally, then confirm the recording is echoed only to the origin after the configured delay.
+7. Verify another connected repeater does not receive the TG9990 test and inspect [PARROT] logs for record/playback completion.
 
 Outstanding roadmap
 -------------------
 1. Verify delivered SGARS invitation/reset email headers and DKIM/DMARC alignment.
-2. Add Parrot service on TG 9990.
+2. Pursue approved external DMR trunking (VKDMR/OpenBridge discussion currently awaiting access to the VK DMR official contact channel).
 3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
+4. Future option: make the dashboard installable as a PWA with conservative static-shell caching and no caching of authenticated/live status APIs.
 
 Safety notes
 ------------
-- Full configuration backups contain passphrases and must be stored securely.
-- Do not expose password hashes, Cognito client secrets, access tokens, WebAuthn private material or full config through public dashboard APIs.
-- Preserve HBlink4 hot-path behaviour; administrator/Cognito/SES calls are control-plane only.
-- Never make an authentication failure for the reserved local username fall through to Cognito; keep both paths explicit and auditable.
-- Keep MFA optional at user-pool level unless a future reviewed change explicitly chooses enforcement.
+- Never expose HomeBrew passphrases, full configuration backups, password hashes, Cognito tokens/credentials, WebAuthn private material or other secrets in logs/repository/public APIs.
+- Never run both blue and green HBlink4 cores simultaneously when duplicate HomeBrew/OpenBridge sessions are possible.
+- Treat the live EIP association as the authoritative production color.
+- Keep external network TGs and local service TGs explicitly isolated; the parrot must never become a transit/bridge path.
