@@ -83,7 +83,7 @@
     <header>
         <div>
             <h1>HBlink4 Administration</h1>
-            <div class="subtle">Repeater talkgroup access control</div>
+            <div class="subtle">Repeater talkgroup access control · Dashboard <span id="dashboardVersion">v1.2.0</span></div>
         </div>
         <div class="actions top-actions">
             <a class="button-link secondary" href="/">← Dashboard</a>
@@ -95,8 +95,8 @@
 
     <section id="setupPanel" class="card hidden">
         <h2>Administration is not configured</h2>
-        <p>Enable the <code>admin</code> section in <code>dashboard/config.json</code> and set a password hash before using this page.</p>
-        <p class="subtle">Generate a password hash with <code>python3 scripts/hash_dashboard_password.py</code>, then restart the dashboard service.</p>
+        <p id="setupText">Enable the <code>admin</code> section in <code>dashboard/config.json</code> and configure either local or Cognito authentication.</p>
+        <p class="subtle">Local PBKDF2 login remains supported. Cognito adds named administrators, invitations, and password reset.</p>
     </section>
 
     <section id="loginPanel" class="card login-card hidden">
@@ -108,6 +108,41 @@
             <input id="password" name="password" type="password" autocomplete="current-password" required>
             <div class="actions" style="margin-top: 16px;">
                 <button id="loginBtn" type="submit">Log in</button>
+                <button id="forgotBtn" class="secondary hidden" type="button">Forgot password</button>
+            </div>
+        </form>
+    </section>
+
+    <section id="newPasswordPanel" class="card login-card hidden">
+        <h2>Set your permanent password</h2>
+        <p class="subtle">Cognito requires a new password the first time you use an invitation.</p>
+        <form id="newPasswordForm">
+            <label for="newPassword">New password</label>
+            <input id="newPassword" type="password" autocomplete="new-password" required>
+            <label for="newPasswordConfirm">Confirm new password</label>
+            <input id="newPasswordConfirm" type="password" autocomplete="new-password" required>
+            <div class="actions" style="margin-top: 16px;">
+                <button id="newPasswordBtn" type="submit">Set password &amp; log in</button>
+            </div>
+        </form>
+    </section>
+
+    <section id="resetPanel" class="card login-card hidden">
+        <h2>Reset administrator password</h2>
+        <p class="subtle">Cognito sends the confirmation code using the user pool's configured recovery method.</p>
+        <form id="resetForm">
+            <label for="resetUsername">Username or email</label>
+            <input id="resetUsername" autocomplete="username" required>
+            <div class="actions" style="margin-top: 12px;">
+                <button id="sendResetCodeBtn" class="secondary" type="button">Send reset code</button>
+            </div>
+            <label for="resetCode">Confirmation code</label>
+            <input id="resetCode" inputmode="numeric" autocomplete="one-time-code">
+            <label for="resetPassword">New password</label>
+            <input id="resetPassword" type="password" autocomplete="new-password">
+            <div class="actions" style="margin-top: 16px;">
+                <button id="confirmResetBtn" type="submit">Set new password</button>
+                <button id="resetBackBtn" class="secondary" type="button">Back to login</button>
             </div>
         </form>
     </section>
@@ -146,6 +181,19 @@
                 <button id="restoreBtn" class="danger" type="button">Restore uploaded config</button>
             </div>
         </div>
+        <section id="adminUsersPanel" class="card hidden">
+            <strong>Administrator users</strong>
+            <p class="subtle">Cognito administrators are members of the configured HBlink4 admin group. New users receive an email invitation and set a permanent password on first login.</p>
+            <div class="file-row">
+                <div>
+                    <label for="inviteEmail">Invite administrator by email</label>
+                    <input id="inviteEmail" type="email" autocomplete="off" placeholder="admin@example.com">
+                </div>
+                <button id="inviteBtn" type="button">Send invitation</button>
+            </div>
+            <div id="adminUsersList" style="margin-top: 16px;"></div>
+        </section>
+
         <div id="patterns"></div>
         <div id="defaultContainer"></div>
 
@@ -167,6 +215,8 @@
         data: null,
         restartEnabled: false,
         backupReady: false,
+        authProvider: 'local',
+        challengeToken: null,
         busy: false
     };
 
@@ -198,7 +248,7 @@
 
     function setBusy(busy) {
         state.busy = busy;
-        ['saveBtn', 'saveRestartBtn', 'restartBtn', 'restoreBtn', 'logoutBtn'].forEach(id => {
+        ['saveBtn', 'saveRestartBtn', 'restartBtn', 'restoreBtn', 'logoutBtn', 'inviteBtn', 'loginBtn', 'newPasswordBtn', 'sendResetCodeBtn', 'confirmResetBtn'].forEach(id => {
             const el = $(id);
             if (el) el.disabled = busy || (id === 'restartBtn' && !state.restartEnabled) || (id === 'saveRestartBtn' && !state.restartEnabled);
         });
@@ -402,6 +452,55 @@
         return { revision: state.data.revision, patterns, default: defaultValue };
     }
 
+    function renderAdminUsers(users, currentUsername) {
+        const root = $('adminUsersList');
+        root.replaceChildren();
+        if (!users.length) {
+            const note = document.createElement('div');
+            note.className = 'subtle';
+            note.textContent = 'No Cognito administrators found.';
+            root.appendChild(note);
+            return;
+        }
+        for (const user of users) {
+            const row = document.createElement('div');
+            row.className = 'actions';
+            row.style.justifyContent = 'space-between';
+            row.style.padding = '9px 0';
+            row.style.borderTop = '1px solid #334155';
+            const label = document.createElement('div');
+            const display = user.email || user.username;
+            label.textContent = `${display}${user.username === currentUsername ? ' (you)' : ''} — ${user.status || 'UNKNOWN'}`;
+            row.appendChild(label);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'secondary';
+            const pending = user.status === 'FORCE_CHANGE_PASSWORD';
+            button.textContent = pending ? 'Resend invite' : 'Send password reset';
+            button.addEventListener('click', () => withBusy(async () => {
+                const action = pending ? 'resend-invite' : 'reset-password';
+                await api(`/api/admin/users/${encodeURIComponent(user.username)}/${action}`, {
+                    method: 'POST',
+                    headers: { 'X-CSRF-Token': state.csrf }
+                });
+                showMessage(pending ? 'Invitation resent.' : 'Password reset code sent.', 'success');
+                await loadAdminUsers();
+            }));
+            row.appendChild(button);
+            root.appendChild(row);
+        }
+    }
+
+    async function loadAdminUsers() {
+        if (state.authProvider !== 'cognito') {
+            $('adminUsersPanel').classList.add('hidden');
+            return;
+        }
+        const result = await api('/api/admin/users');
+        renderAdminUsers(result.users || [], result.current_username || '');
+        $('adminUsersPanel').classList.remove('hidden');
+    }
+
     async function loadEditor() {
         state.data = await api('/api/admin/talkgroups');
         renderEditor();
@@ -411,14 +510,21 @@
         $('loginPanel').classList.add('hidden');
         $('setupPanel').classList.add('hidden');
         $('logoutBtn').classList.remove('hidden');
+        await loadAdminUsers();
     }
 
     async function refreshStatus() {
         const status = await api('/api/admin/status');
         state.restartEnabled = status.restart_enabled;
+        if (status.dashboard_version) $('dashboardVersion').textContent = `v${status.dashboard_version}`;
+        state.authProvider = status.auth_provider || 'local';
+        $('forgotBtn').classList.toggle('hidden', !status.password_reset_supported);
         $('restartHint').textContent = status.restart_enabled ? '' : 'Restart is disabled until the local systemd permission is configured.';
 
         if (!status.enabled || !status.configured) {
+            $('setupText').textContent = state.authProvider === 'cognito'
+                ? 'Cognito authentication is selected but the user pool region, pool ID, or client ID is not configured.'
+                : 'Local administration is selected but the administrator username/password hash is not configured.';
             $('setupPanel').classList.remove('hidden');
             $('loginPanel').classList.add('hidden');
             $('backupPanel').classList.add('hidden');
@@ -428,6 +534,8 @@
         if (!status.authenticated) {
             state.backupReady = false;
             $('loginPanel').classList.remove('hidden');
+            $('newPasswordPanel').classList.add('hidden');
+            $('resetPanel').classList.add('hidden');
             $('setupPanel').classList.add('hidden');
             $('backupPanel').classList.add('hidden');
             $('editorPanel').classList.add('hidden');
@@ -574,12 +682,97 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: $('username').value, password: $('password').value })
             });
-            state.csrf = result.csrf_token;
             $('password').value = '';
+            if (result.challenge === 'NEW_PASSWORD_REQUIRED') {
+                state.challengeToken = result.challenge_token;
+                $('loginPanel').classList.add('hidden');
+                $('newPasswordPanel').classList.remove('hidden');
+                showMessage('Your invitation is valid. Choose a permanent password to continue.', 'info');
+                return;
+            }
+            state.csrf = result.csrf_token;
             clearMessage();
             await refreshStatus();
         });
     });
+
+    $('newPasswordForm').addEventListener('submit', event => {
+        event.preventDefault();
+        withBusy(async () => {
+            if ($('newPassword').value !== $('newPasswordConfirm').value) {
+                throw new Error('The new passwords do not match');
+            }
+            const result = await api('/api/admin/new-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challenge_token: state.challengeToken,
+                    new_password: $('newPassword').value
+                })
+            });
+            state.challengeToken = null;
+            state.csrf = result.csrf_token;
+            $('newPassword').value = '';
+            $('newPasswordConfirm').value = '';
+            clearMessage();
+            await refreshStatus();
+        });
+    });
+
+    $('forgotBtn').addEventListener('click', () => {
+        $('resetUsername').value = $('username').value;
+        $('loginPanel').classList.add('hidden');
+        $('resetPanel').classList.remove('hidden');
+        clearMessage();
+    });
+
+    $('resetBackBtn').addEventListener('click', () => {
+        $('resetPanel').classList.add('hidden');
+        $('loginPanel').classList.remove('hidden');
+        clearMessage();
+    });
+
+    $('sendResetCodeBtn').addEventListener('click', () => withBusy(async () => {
+        const result = await api('/api/admin/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: $('resetUsername').value })
+        });
+        showMessage(result.message || 'If that account exists, a reset code has been sent.', 'success');
+    }));
+
+    $('resetForm').addEventListener('submit', event => {
+        event.preventDefault();
+        withBusy(async () => {
+            await api('/api/admin/confirm-password-reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: $('resetUsername').value,
+                    confirmation_code: $('resetCode').value,
+                    new_password: $('resetPassword').value
+                })
+            });
+            $('resetCode').value = '';
+            $('resetPassword').value = '';
+            $('resetPanel').classList.add('hidden');
+            $('loginPanel').classList.remove('hidden');
+            showMessage('Password reset complete. Log in with your new password.', 'success');
+        });
+    });
+
+    $('inviteBtn').addEventListener('click', () => withBusy(async () => {
+        const email = $('inviteEmail').value.trim();
+        if (!email) throw new Error('Enter an email address to invite');
+        await api('/api/admin/users/invite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+            body: JSON.stringify({ email })
+        });
+        $('inviteEmail').value = '';
+        showMessage(`Invitation sent to ${email}.`, 'success');
+        await loadAdminUsers();
+    }));
 
     $('saveBtn').addEventListener('click', () => withBusy(saveConfiguration));
     $('saveRestartBtn').addEventListener('click', () => withBusy(async () => {

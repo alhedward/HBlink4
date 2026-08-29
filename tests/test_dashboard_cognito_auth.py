@@ -130,3 +130,54 @@ def test_password_reset_round_trip():
     auth.confirm_password_reset("tony", "123456", "new-secret")
     assert fake.confirm_calls[-1]["ConfirmationCode"] == "123456"
     assert fake.confirm_calls[-1]["SecretHash"]
+
+
+def test_admin_management_invite_list_and_reset():
+    fake = FakeClient()
+    fake.list_users_in_group = lambda **kwargs: {
+        "Users": [
+            {
+                "Username": "tony",
+                "Enabled": True,
+                "UserStatus": "CONFIRMED",
+                "Attributes": [{"Name": "email", "Value": "tony@example.com"}],
+            }
+        ]
+    }
+    created = []
+    grouped = []
+    resets = []
+    resent = []
+
+    def create_user(**kwargs):
+        if kwargs.get("MessageAction") == "RESEND":
+            resent.append(kwargs)
+        else:
+            created.append(kwargs)
+        return {"User": {"Username": kwargs["Username"]}}
+
+    fake.admin_create_user = create_user
+    fake.admin_add_user_to_group = lambda **kwargs: grouped.append(kwargs) or {}
+    fake.admin_reset_user_password = lambda **kwargs: resets.append(kwargs) or {}
+
+    auth = CognitoAdminAuthenticator(config(), client=fake)
+    users = auth.list_admin_users()
+    assert users == [
+        {
+            "username": "tony",
+            "email": "tony@example.com",
+            "enabled": True,
+            "status": "CONFIRMED",
+        }
+    ]
+
+    username = auth.invite_admin("NEW@example.com")
+    assert username == "new@example.com"
+    assert created[-1]["Username"] == "new@example.com"
+    assert grouped[-1]["GroupName"] == "HBlink4Admins"
+
+    auth.resend_invite("new@example.com")
+    assert resent[-1]["MessageAction"] == "RESEND"
+
+    auth.reset_admin_password("tony")
+    assert resets[-1]["Username"] == "tony"

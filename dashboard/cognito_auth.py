@@ -15,7 +15,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class CognitoAuthError(RuntimeError):
@@ -306,6 +306,100 @@ class CognitoAdminAuthenticator:
             raise CognitoAuthError("Could not start Cognito password reset") from exc
         details = response.get("CodeDeliveryDetails")
         return details if isinstance(details, dict) else None
+
+    def list_admin_users(self) -> List[Dict[str, Any]]:
+        """Return users currently in the configured HBlink4 admin group."""
+        users = []
+        token = None
+        try:
+            while True:
+                kwargs: Dict[str, Any] = {
+                    "UserPoolId": self.user_pool_id,
+                    "GroupName": self.admin_group,
+                    "Limit": 60,
+                }
+                if token:
+                    kwargs["NextToken"] = token
+                response = self.client.list_users_in_group(**kwargs)
+                for user in response.get("Users", []):
+                    if not isinstance(user, dict):
+                        continue
+                    attributes = {
+                        str(item.get("Name")): str(item.get("Value", ""))
+                        for item in user.get("Attributes", [])
+                        if isinstance(item, dict) and item.get("Name")
+                    }
+                    users.append(
+                        {
+                            "username": str(user.get("Username", "")),
+                            "email": attributes.get("email", ""),
+                            "enabled": bool(user.get("Enabled", False)),
+                            "status": str(user.get("UserStatus", "")),
+                        }
+                    )
+                token = response.get("NextToken")
+                if not token:
+                    break
+        except Exception as exc:
+            raise CognitoAuthError("Could not list Cognito administrator users") from exc
+        return sorted(users, key=lambda item: (item.get("email") or item.get("username") or "").lower())
+
+    def invite_admin(self, email: str) -> str:
+        """Invite an administrator by email and add the account to the admin group."""
+        if not isinstance(email, str) or "@" not in email or len(email) > 320:
+            raise CognitoPasswordError("Enter a valid administrator email address")
+        email = email.strip().lower()
+        try:
+            response = self.client.admin_create_user(
+                UserPoolId=self.user_pool_id,
+                Username=email,
+                UserAttributes=[{"Name": "email", "Value": email}],
+                DesiredDeliveryMediums=["EMAIL"],
+            )
+            username = str((response.get("User") or {}).get("Username") or email)
+            self.client.admin_add_user_to_group(
+                UserPoolId=self.user_pool_id,
+                Username=username,
+                GroupName=self.admin_group,
+            )
+            return username
+        except Exception as exc:
+            code = self._error_code(exc)
+            if code == "UsernameExistsException":
+                raise CognitoPasswordError("That Cognito user already exists") from exc
+            if code in {"InvalidParameterException", "InvalidPasswordException"}:
+                raise CognitoPasswordError(
+                    self._error_message(exc) or "Administrator invitation was rejected"
+                ) from exc
+            raise CognitoAuthError("Could not invite Cognito administrator") from exc
+
+    def resend_invite(self, username: str) -> None:
+        if not isinstance(username, str) or not username:
+            raise CognitoPasswordError("Administrator username is required")
+        try:
+            self.client.admin_create_user(
+                UserPoolId=self.user_pool_id,
+                Username=username,
+                MessageAction="RESEND",
+                DesiredDeliveryMediums=["EMAIL"],
+            )
+        except Exception as exc:
+            raise CognitoAuthError("Could not resend Cognito administrator invitation") from exc
+
+    def reset_admin_password(self, username: str) -> None:
+        """Ask Cognito to send a password-reset code to an existing administrator."""
+        if not isinstance(username, str) or not username:
+            raise CognitoPasswordError("Administrator username is required")
+        try:
+            self.client.admin_reset_user_password(
+                UserPoolId=self.user_pool_id,
+                Username=username,
+            )
+        except Exception as exc:
+            code = self._error_code(exc)
+            if code == "UserNotFoundException":
+                raise CognitoPasswordError("Administrator user was not found") from exc
+            raise CognitoAuthError("Could not start administrator password reset") from exc
 
     def confirm_password_reset(self, username: str, confirmation_code: str, new_password: str) -> None:
         if not all(isinstance(value, str) and value for value in (username, confirmation_code, new_password)):

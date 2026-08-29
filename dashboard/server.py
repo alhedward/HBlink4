@@ -29,6 +29,11 @@ try:
         RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
         verify_password,
     )
+    from .cognito_auth import (
+        CognitoAdminAuthenticator, CognitoAuthError, CognitoAuthorizationError,
+        CognitoChallengeError, CognitoConfigError, CognitoInvalidCredentials,
+        CognitoPasswordError,
+    )
 except ImportError:
     # Running the dashboard directly without package install
     import sys as _sys
@@ -39,12 +44,18 @@ except ImportError:
         RestartError, StaleConfigError, TalkgroupConfigError, TalkgroupConfigStore,
         verify_password,
     )
+    from cognito_auth import (
+        CognitoAdminAuthenticator, CognitoAuthError, CognitoAuthorizationError,
+        CognitoChallengeError, CognitoConfigError, CognitoInvalidCredentials,
+        CognitoPasswordError,
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="HBlink4 Dashboard", version="1.1.0")
+DASHBOARD_VERSION = "1.2.0"
+app = FastAPI(title="HBlink4 Dashboard", version=DASHBOARD_VERSION)
 
 # Load dashboard configuration
 def load_config() -> dict:
@@ -88,6 +99,15 @@ def load_config() -> dict:
             "enabled": False,
             "username": "admin",
             "password_hash": "",
+            "auth_provider": "local",
+            "cognito": {
+                "region": "ap-southeast-2",
+                "user_pool_id": "",
+                "client_id": "",
+                "client_secret": "",
+                "admin_group": "HBlink4Admins",
+                "challenge_timeout_minutes": 10,
+            },
             "session_timeout_minutes": 60,
             "cookie_secure": False,
             "hblink_config_path": "../config/config.json",
@@ -130,20 +150,49 @@ ADMIN_COOKIE_NAME = "hblink4_admin_session"
 admin_config = dashboard_config.get("admin", {}) or {}
 admin_sessions = AdminSessionManager(admin_config.get("session_timeout_minutes", 60))
 login_limiter = LoginRateLimiter()
+password_reset_limiter = LoginRateLimiter(max_failures=5, window_seconds=900)
+_cognito_auth = None
 MAX_CONFIG_UPLOAD_BYTES = 2 * 1024 * 1024
 
 
 def _admin_password_hash() -> str:
-    """Allow a deployment to keep the hash outside config.json if preferred."""
+    """Allow a deployment to keep the legacy local hash outside config.json."""
     return os.environ.get("HBLINK4_DASH_ADMIN_PASSWORD_HASH", admin_config.get("password_hash", ""))
 
 
-def admin_available() -> bool:
-    return bool(
-        admin_config.get("enabled", False)
-        and admin_config.get("username")
-        and _admin_password_hash()
+def _admin_auth_provider() -> str:
+    return str(admin_config.get("auth_provider", "local")).strip().lower()
+
+
+def _cognito_configured() -> bool:
+    config = admin_config.get("cognito", {}) or {}
+    return all(
+        (
+            os.environ.get("HBLINK4_COGNITO_REGION", str(config.get("region", ""))).strip(),
+            os.environ.get(
+                "HBLINK4_COGNITO_USER_POOL_ID", str(config.get("user_pool_id", ""))
+            ).strip(),
+            os.environ.get("HBLINK4_COGNITO_CLIENT_ID", str(config.get("client_id", ""))).strip(),
+        )
     )
+
+
+def _cognito_authenticator() -> CognitoAdminAuthenticator:
+    global _cognito_auth
+    if _cognito_auth is None:
+        _cognito_auth = CognitoAdminAuthenticator(admin_config.get("cognito", {}) or {})
+    return _cognito_auth
+
+
+def admin_available() -> bool:
+    if not admin_config.get("enabled", False):
+        return False
+    provider = _admin_auth_provider()
+    if provider == "cognito":
+        return _cognito_configured()
+    if provider == "local":
+        return bool(admin_config.get("username") and _admin_password_hash())
+    return False
 
 
 def _admin_session(request: Request):
@@ -1089,21 +1138,26 @@ async def get_config():
     """Get public dashboard configuration without administrative secrets."""
     public_config = {key: value for key, value in dashboard_config.items() if key != "admin"}
     public_config["admin_available"] = admin_available()
+    public_config["dashboard_version"] = DASHBOARD_VERSION
     return public_config
 
 
 @app.get("/api/admin/status")
 async def admin_status(request: Request):
     """Return non-secret admin availability and current session status."""
-    enabled = bool(admin_config.get("enabled", False))
-    configured = bool(admin_config.get("username") and _admin_password_hash())
+    provider = _admin_auth_provider()
+    configured = admin_available()
     session = admin_sessions.get(request.cookies.get(ADMIN_COOKIE_NAME)) if configured else None
     restart_cfg = admin_config.get("restart", {}) or {}
     result = {
-        "enabled": enabled,
+        "enabled": bool(admin_config.get("enabled", False)),
         "configured": configured,
         "authenticated": session is not None,
         "restart_enabled": bool(restart_cfg.get("enabled", False)),
+        "dashboard_version": DASHBOARD_VERSION,
+        "auth_provider": provider,
+        "password_reset_supported": provider == "cognito" and configured,
+        "user_management_supported": provider == "cognito" and configured,
     }
     if session is not None:
         result["username"] = session.username
@@ -1113,9 +1167,30 @@ async def admin_status(request: Request):
     return result
 
 
+def _admin_login_response(username: str) -> JSONResponse:
+    token, session = admin_sessions.create(username)
+    response = JSONResponse(
+        {
+            "ok": True,
+            "username": session.username,
+            "csrf_token": session.csrf_token,
+        }
+    )
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        token,
+        max_age=admin_sessions.timeout_seconds,
+        httponly=True,
+        secure=bool(admin_config.get("cookie_secure", False)),
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
 @app.post("/api/admin/login")
 async def admin_login(request: Request, payload: dict = Body(...)):
-    """Authenticate an administrator and create an HttpOnly cookie session."""
+    """Authenticate an administrator and create the existing local cookie session."""
     if not admin_available():
         raise HTTPException(status_code=503, detail="Dashboard administration is not configured")
 
@@ -1134,6 +1209,43 @@ async def admin_login(request: Request, payload: dict = Body(...)):
         login_limiter.record_failure(client_key)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
+    provider = _admin_auth_provider()
+    if provider == "cognito":
+        try:
+            result = await asyncio.to_thread(_cognito_authenticator().authenticate, username, password)
+        except CognitoInvalidCredentials as exc:
+            login_limiter.record_failure(client_key)
+            logger.warning("Dashboard Cognito admin login failed from %s", client_key)
+            raise HTTPException(status_code=401, detail="Invalid username or password") from exc
+        except CognitoAuthorizationError as exc:
+            login_limiter.record_failure(client_key)
+            logger.warning("Authenticated Cognito user was not authorized for dashboard admin")
+            raise HTTPException(
+                status_code=403,
+                detail="This account is not authorized for HBlink4 administration",
+            ) from exc
+        except (CognitoPasswordError, CognitoChallengeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (CognitoConfigError, CognitoAuthError) as exc:
+            logger.error("Cognito dashboard authentication failed: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        login_limiter.record_success(client_key)
+        if result.status == "new_password_required":
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "challenge": "NEW_PASSWORD_REQUIRED",
+                    "challenge_token": result.challenge_token,
+                    "required_attributes": list(result.required_attributes),
+                }
+            )
+        if result.identity is None:
+            raise HTTPException(status_code=503, detail="Cognito did not return an administrator identity")
+        response = _admin_login_response(result.identity.username)
+        logger.info("Dashboard Cognito admin %s logged in from %s", result.identity.username, client_key)
+        return response
+
     configured_username = str(admin_config.get("username", ""))
     username_ok = hmac.compare_digest(username, configured_username)
     password_ok = await asyncio.to_thread(verify_password, password, _admin_password_hash())
@@ -1143,25 +1255,136 @@ async def admin_login(request: Request, payload: dict = Body(...)):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     login_limiter.record_success(client_key)
-    token, session = admin_sessions.create(configured_username)
-    response = JSONResponse(
-        {
-            "ok": True,
-            "username": session.username,
-            "csrf_token": session.csrf_token,
-        }
-    )
-    response.set_cookie(
-        ADMIN_COOKIE_NAME,
-        token,
-        max_age=admin_sessions.timeout_seconds,
-        httponly=True,
-        secure=bool(admin_config.get("cookie_secure", False)),
-        samesite="strict",
-        path="/",
-    )
+    response = _admin_login_response(configured_username)
     logger.info("Dashboard admin login succeeded from %s", client_key)
     return response
+
+
+@app.post("/api/admin/new-password")
+async def admin_complete_new_password(request: Request, payload: dict = Body(...)):
+    """Complete the temporary-password challenge for an invited Cognito admin."""
+    if _admin_auth_provider() != "cognito" or not admin_available():
+        raise HTTPException(status_code=409, detail="Cognito administrator authentication is not enabled")
+    challenge_token = payload.get("challenge_token", "") if isinstance(payload, dict) else ""
+    new_password = payload.get("new_password", "") if isinstance(payload, dict) else ""
+    try:
+        identity = await asyncio.to_thread(
+            _cognito_authenticator().complete_new_password, challenge_token, new_password
+        )
+    except (CognitoChallengeError, CognitoPasswordError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (CognitoConfigError, CognitoAuthError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Dashboard Cognito admin %s completed first-login password change", identity.username)
+    return _admin_login_response(identity.username)
+
+
+@app.post("/api/admin/forgot-password")
+async def admin_forgot_password(request: Request, payload: dict = Body(...)):
+    """Send a Cognito reset code while avoiding account-existence disclosure."""
+    if _admin_auth_provider() != "cognito" or not admin_available():
+        raise HTTPException(status_code=409, detail="Cognito password reset is not enabled")
+    client_key = request.client.host if request.client else "unknown"
+    retry_after = password_reset_limiter.retry_after(client_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many password reset attempts; try again in {retry_after} seconds",
+            headers={"Retry-After": str(retry_after)},
+        )
+    username = payload.get("username", "") if isinstance(payload, dict) else ""
+    try:
+        await asyncio.to_thread(_cognito_authenticator().start_password_reset, username)
+    except CognitoPasswordError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except (CognitoConfigError, CognitoAuthError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    password_reset_limiter.record_failure(client_key)
+    return {
+        "ok": True,
+        "message": "If that administrator account exists, Cognito has sent a password reset code.",
+    }
+
+
+@app.post("/api/admin/confirm-password-reset")
+async def admin_confirm_password_reset(request: Request, payload: dict = Body(...)):
+    """Confirm a Cognito reset code and set the administrator's new password."""
+    if _admin_auth_provider() != "cognito" or not admin_available():
+        raise HTTPException(status_code=409, detail="Cognito password reset is not enabled")
+    username = payload.get("username", "") if isinstance(payload, dict) else ""
+    confirmation_code = payload.get("confirmation_code", "") if isinstance(payload, dict) else ""
+    new_password = payload.get("new_password", "") if isinstance(payload, dict) else ""
+    try:
+        await asyncio.to_thread(
+            _cognito_authenticator().confirm_password_reset,
+            username,
+            confirmation_code,
+            new_password,
+        )
+    except CognitoPasswordError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (CognitoConfigError, CognitoAuthError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    client_key = request.client.host if request.client else "unknown"
+    password_reset_limiter.record_success(client_key)
+    return {"ok": True}
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(request: Request):
+    session = _admin_session(request)
+    if _admin_auth_provider() != "cognito":
+        raise HTTPException(status_code=409, detail="Cognito administrator management is not enabled")
+    try:
+        users = await asyncio.to_thread(_cognito_authenticator().list_admin_users)
+    except CognitoAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"users": users, "current_username": session.username}
+
+
+@app.post("/api/admin/users/invite")
+async def admin_invite_user(request: Request, payload: dict = Body(...)):
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    if _admin_auth_provider() != "cognito":
+        raise HTTPException(status_code=409, detail="Cognito administrator management is not enabled")
+    email = payload.get("email", "") if isinstance(payload, dict) else ""
+    try:
+        username = await asyncio.to_thread(_cognito_authenticator().invite_admin, email)
+    except CognitoPasswordError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CognitoAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Dashboard admin %s invited Cognito administrator %s", session.username, username)
+    return {"ok": True, "username": username}
+
+
+@app.post("/api/admin/users/{username}/resend-invite")
+async def admin_resend_user_invite(username: str, request: Request):
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    if _admin_auth_provider() != "cognito":
+        raise HTTPException(status_code=409, detail="Cognito administrator management is not enabled")
+    try:
+        await asyncio.to_thread(_cognito_authenticator().resend_invite, username)
+    except (CognitoPasswordError, CognitoAuthError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info("Dashboard admin %s resent invite for %s", session.username, username)
+    return {"ok": True}
+
+
+@app.post("/api/admin/users/{username}/reset-password")
+async def admin_reset_user_password(username: str, request: Request):
+    session = _admin_session(request)
+    _require_csrf(request, session)
+    if _admin_auth_provider() != "cognito":
+        raise HTTPException(status_code=409, detail="Cognito administrator management is not enabled")
+    try:
+        await asyncio.to_thread(_cognito_authenticator().reset_admin_password, username)
+    except (CognitoPasswordError, CognitoAuthError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info("Dashboard admin %s triggered password reset for %s", session.username, username)
+    return {"ok": True}
 
 
 @app.post("/api/admin/logout")
