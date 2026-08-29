@@ -5,7 +5,12 @@ HBlink4 Runner Script
 
 import os
 import sys
-from hblink4.hblink import main
+from hblink4.hblink import HBProtocol, main
+from hblink4.parrot import install_parrot
+
+
+install_parrot(HBProtocol)
+
 
 if __name__ == '__main__':
     # If no config file specified, use config/config.json relative to this script
