@@ -93,7 +93,7 @@
     }
 
     function buildSecurityPanel() {
-        const parent = $('mfaSecurityPanel');
+        const parent = $('mfaSecurityDetails') || $('mfaSecurityPanel');
         if (!parent || $('passkeySecurityBox')) return;
         const box = document.createElement('div');
         box.id = 'passkeySecurityBox';
@@ -196,29 +196,38 @@
         const box = $('passkeySecurityBox');
         if (!box) return;
         if (!supported) {
+            state.passkeyCount = 0;
             box.classList.remove('hidden');
+            if (window.updateAdminSecurityPanel) window.updateAdminSecurityPanel();
             return;
         }
         try {
             const result = await api('/api/admin/webauthn/credentials');
             box.classList.remove('hidden');
             const credentials = result.credentials || [];
+            state.passkeyCount = credentials.length;
             $('passkeyStatus').textContent = credentials.length
                 ? `${credentials.length} security key / passkey credential${credentials.length === 1 ? '' : 's'} registered.`
                 : 'No security key / passkey is registered yet.';
             renderCredentials(credentials);
+            if (window.updateAdminSecurityPanel) window.updateAdminSecurityPanel();
         } catch (error) {
+            state.passkeyCount = 0;
             if (error.status === 401 || error.status === 409) {
                 box.classList.add('hidden');
+                if (window.updateAdminSecurityPanel) window.updateAdminSecurityPanel();
                 return;
             }
             box.classList.remove('hidden');
             $('passkeyStatus').textContent = `Security-key status unavailable: ${error.message}`;
+            if (window.updateAdminSecurityPanel) window.updateAdminSecurityPanel();
         }
     }
 
     async function registerPasskey() {
         if (!supported) throw new Error('This browser does not support WebAuthn');
+        state.securitySettingsExpanded = true;
+        if (window.updateAdminSecurityPanel) window.updateAdminSecurityPanel();
         const start = await api('/api/admin/webauthn/register/start', {
             method: 'POST',
             headers: { 'X-CSRF-Token': state.csrf }
@@ -239,6 +248,7 @@
             body: JSON.stringify({ credential: credentialJSON(credential) })
         });
         showMessage('Security key / passkey registered successfully.', 'success');
+        state.securitySettingsExpanded = false;
         await refreshPasskeys();
     }
 
