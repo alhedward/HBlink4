@@ -1,7 +1,8 @@
 """Top-level HBlink4 administrator application.
 
 Composes the existing local/Cognito/TOTP auth wrapper, WebAuthn security-key
-wrapper, and administrator profile/personalised-invitation routes.
+wrapper, administrator profile/personalised-invitation routes, and public
+local-service visibility.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from .cognito_auth import CognitoAuthError, CognitoPasswordError
 
 
 _identity_service_instance = None
-_ADMIN_ASSET_VERSION = "20260829-invite-feedback-2"
+_ADMIN_ASSET_VERSION = "20260830-local-services-1"
 
 
 def _identity_service() -> CognitoAdminIdentityService:
@@ -32,12 +33,54 @@ def _identity_service() -> CognitoAdminIdentityService:
     return _identity_service_instance
 
 
+def _public_local_services() -> list[dict]:
+    """Return non-secret local-service metadata from the live HBlink4 config."""
+    try:
+        _raw, config, _revision, _section_key = server._talkgroup_store()._read()
+    except Exception:
+        return []
+
+    services: list[dict] = []
+    parrot = config.get("parrot")
+    if isinstance(parrot, dict) and parrot.get("enabled") is True:
+        talkgroup = parrot.get("talkgroup")
+        if isinstance(talkgroup, int) and not isinstance(talkgroup, bool):
+            services.append(
+                {
+                    "type": "parrot",
+                    "name": "Parrot / Echo Test",
+                    "talkgroup": talkgroup,
+                    "scope": "local-only",
+                    "description": (
+                        "Records a local group call and plays it back only to the "
+                        "originating repeater or hotspot. It is not routed to other "
+                        "repeaters or external DMR networks."
+                    ),
+                }
+            )
+    return services
+
+
 class AdminIdentityMiddleware:
     def __init__(self, app):
         self.app = app
 
     async def _send(self, response, scope, receive, send):
         await response(scope, receive, send)
+
+    @staticmethod
+    def _inject_local_services_script(html: str, version: str) -> str:
+        script = f'\n<script src="/static/local_services.js?v={version}"></script>\n'
+        return html.replace("</body>", script + "</body>")
+
+    async def _serve_dashboard_page(self, scope, receive, send):
+        html_path = Path(server.__file__).parent / "static" / "dashboard.html"
+        if not html_path.exists():
+            await self.app(scope, receive, send)
+            return
+        html = html_path.read_text(encoding="utf-8")
+        html = self._inject_local_services_script(html, _ADMIN_ASSET_VERSION)
+        await self._send(HTMLResponse(html, headers={"Cache-Control": "no-store"}), scope, receive, send)
 
     async def _serve_admin_page(self, scope, receive, send):
         html_path = Path(server.__file__).parent / "static" / "admin.html"
@@ -51,10 +94,11 @@ class AdminIdentityMiddleware:
             f'\n<script src="/static/admin_webauthn.js?v={version}"></script>'
             f'\n<script src="/static/admin_invite_feedback.js?v={version}"></script>'
             f'\n<script src="/static/admin_identity.js?v={version}"></script>'
-            f'\n<script src="/static/admin_profile_compact.js?v={version}"></script>\n'
+            f'\n<script src="/static/admin_profile_compact.js?v={version}"></script>'
+            f'\n<script src="/static/local_services.js?v={version}"></script>\n'
         )
         html = html.replace("</body>", scripts + "</body>")
-        await self._send(HTMLResponse(html), scope, receive, send)
+        await self._send(HTMLResponse(html, headers={"Cache-Control": "no-store"}), scope, receive, send)
 
     def _cognito_session(self, scope, require_csrf=False):
         session = auth_app._session_from_scope(scope)
@@ -150,6 +194,8 @@ class AdminIdentityMiddleware:
             response = JSONResponse({"detail": str(exc)}, status_code=401)
         except RuntimeError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=409)
+        except PermissionError as exc:
+            response = JSONResponse({"detail": str(exc)}, status_code=401)
         except CognitoPasswordError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=409)
         except CognitoAuthError as exc:
@@ -163,8 +209,14 @@ class AdminIdentityMiddleware:
         method = scope.get("method")
         path = scope.get("path")
 
+        if method == "GET" and path == "/":
+            await self._serve_dashboard_page(scope, receive, send)
+            return
         if method == "GET" and path == "/admin":
             await self._serve_admin_page(scope, receive, send)
+            return
+        if method == "GET" and path == "/api/local-services":
+            await self._send(JSONResponse({"services": _public_local_services()}), scope, receive, send)
             return
 
         if server._admin_auth_provider() != "cognito" or not server.admin_config.get("enabled", False):
