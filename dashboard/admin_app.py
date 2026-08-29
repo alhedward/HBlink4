@@ -194,8 +194,6 @@ class AdminIdentityMiddleware:
             response = JSONResponse({"detail": str(exc)}, status_code=401)
         except RuntimeError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=409)
-        except PermissionError as exc:
-            response = JSONResponse({"detail": str(exc)}, status_code=401)
         except CognitoPasswordError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=409)
         except CognitoAuthError as exc:
