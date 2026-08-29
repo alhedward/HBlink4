@@ -6,19 +6,40 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current feature work: feature/parrot-tg9990
+Current feature work: fix/parrot-dashboard-visibility
 Dashboard semantic version: 1.2.0
 
 Known-good production baseline
 ------------------------------
-- main is 8f558fc07a9a18c6def9f71a1528ebe2559ae14e (PR #7, administrator UX follow-up).
-- PR #7 passed the complete Python 3.12 regression suite with 135 tests before merge.
-- hblink-website production pins that revision and Production CD completed successfully on 2026-08-29.
+- main is 94731c8d86e3f2faea0b9e2fc6a95ca5aa82d1d5 (PR #8, local TG9990 parrot service).
+- PR #8 passed the complete Python 3.12 regression suite with 141 tests before merge.
+- hblink-website production pins that revision and Production CD completed successfully on 2026-08-30.
 - Production is green on i-0818c2b22deb877c3 with EIP 54.206.153.208.
-- Terraform active_color is green; the last application-only deployment changed 0 infrastructure resources.
 - Dashboard authentication is Cognito, with the exact configured local PBKDF2 account retained as the permanent break-glass path.
 - Cognito MFA remains OPTIONAL with TOTP enabled and WebAuthn RP dmr.vk2ale.com using MULTI_FACTOR_WITH_USER_VERIFICATION.
 - Administrator invitation feedback, compact completed profile and compact configured MFA/WebAuthn controls are deployed.
+
+Parrot / echo service
+---------------------
+- HBlink4 has an in-process local DMR parrot service based on the classic HBlink3 playback behaviour without running a second legacy HBLink daemon.
+- hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence to the originating repeater/hotspot at the configured cadence after a proper voice terminator.
+- The parrot is configurable through a top-level `parrot` object. Production uses TG9990, a 2-second delay, 60-ms packet cadence and a 120-second recording cap.
+- When enabled, the configured parrot TG is accepted as a local service even when absent from normal repeater TG allow-lists.
+- The parrot TG receives an empty normal route cache: it is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
+- A numerically identical TG received from an external trunk does not invoke the local parrot.
+- Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
+- Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
+- Regression coverage for RF/core behaviour is in tests/test_parrot.py; operator documentation is docs/parrot.md.
+
+Dashboard visibility follow-up
+------------------------------
+- The original TG9990 rollout did not expose the local service in the dashboard UI, because TG9990 is intentionally absent from the ordinary routed talkgroup ACLs.
+- Branch fix/parrot-dashboard-visibility adds a public `/api/local-services` projection that reads only non-secret enabled local-service metadata from the live HBlink4 config.
+- The endpoint never returns repeater passphrases or the complete configuration.
+- dashboard/static/local_services.js renders an explicit public `Local DMR Services` entry for `TG9990 — Parrot / Echo Test` plus a compact header badge.
+- The same helper adds a `Local DMR services` card to the administrator view, explicitly marking TG9990 as local-only and excluded from ordinary repeater/external-network routing.
+- Public and administrator HTML inject the local-services helper with a cache-busted asset version and no-store HTML response.
+- Regression coverage is in tests/test_parrot_dashboard.py.
 
 Authentication and administrator controls
 -----------------------------------------
@@ -29,21 +50,6 @@ Authentication and administrator controls
 - Optional TOTP and WebAuthn/YubiKey/passkey management are available to Cognito administrators.
 - Completed administrator profile and configured MFA/security-key panels collapse to compact Change controls.
 - Personalized administrator invitations use SES from webmaster@sgars.vk2ale.com and clear the invite form with local success/failure feedback after submission.
-
-Parrot / echo feature work
---------------------------
-- Branch feature/parrot-tg9990 adds an in-process local DMR parrot service, based on the classic HBlink3 playback behaviour but without running a second legacy HBLink daemon.
-- hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence to the originating repeater/hotspot at the configured cadence after a proper voice terminator.
-- run.py installs the isolated parrot hooks on HBProtocol before starting the normal core.
-- The parrot is configurable through a top-level `parrot` object. Generic sample defaults are disabled, TG9990, 2-second delay, 60-ms packet cadence and 120-second recording cap.
-- When enabled, the configured parrot TG is accepted as a local service even when absent from the normal repeater TG allow-list.
-- The parrot TG receives an empty normal route cache: it is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
-- A numerically identical TG received from an external trunk does not invoke the local parrot.
-- Local-to-network DMRD translation is respected, so a local RF alias can map to canonical TG9990.
-- Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
-- Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
-- Regression coverage is in tests/test_parrot.py; operator documentation is docs/parrot.md.
-- Production enablement will be done through hblink-website policy reconciliation after this HBlink4 branch passes CI and is merged.
 
 Production infrastructure state
 -------------------------------
@@ -57,22 +63,13 @@ Production infrastructure state
 - SES sender: webmaster@sgars.vk2ale.com
 - The local PBKDF2 break-glass credential remains retained through the root-only deployment environment/SSM path and must never be exposed.
 
-Deployment plan for parrot
---------------------------
-1. Run the complete HBlink4 Python 3.12 regression suite on feature/parrot-tg9990.
-2. Merge only after the final branch head is green.
-3. In hblink-website, pin the merged HBlink4 revision and extend the canonical policy/reconciliation path to set `parrot.enabled=true` on TG9990 without changing stored HomeBrew passphrases or upstream links.
-4. Run full hblink-website Terraform/safety CI. The Terraform plan must contain no EC2, EIP, Cognito, SES, DNS or other infrastructure mutation beyond the HBlink4 revision output if applicable.
-5. Deploy steady-state to existing production green and verify the core/dashboard/Caddy services remain healthy and the EIP stays on green.
-6. RF-test TG9990 from a connected repeater/hotspot: key, speak, unkey normally, then confirm the recording is echoed only to the origin after the configured delay.
-7. Verify another connected repeater does not receive the TG9990 test and inspect [PARROT] logs for record/playback completion.
-
 Outstanding roadmap
 -------------------
 1. Verify delivered SGARS invitation/reset email headers and DKIM/DMARC alignment.
 2. Pursue approved external DMR trunking (VKDMR/OpenBridge discussion currently awaiting access to the VK DMR official contact channel).
 3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
 4. Future option: make the dashboard installable as a PWA with conservative static-shell caching and no caching of authenticated/live status APIs.
+5. Inspect the SGARS website repository read-only to document how it consumes HBlink dashboard/talkgroup data once that repository is available to the GitHub connector; do not modify it as part of this follow-up.
 
 Safety notes
 ------------
