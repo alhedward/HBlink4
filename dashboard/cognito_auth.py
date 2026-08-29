@@ -353,7 +353,10 @@ class CognitoAdminAuthenticator:
             response = self.client.admin_create_user(
                 UserPoolId=self.user_pool_id,
                 Username=email,
-                UserAttributes=[{"Name": "email", "Value": email}],
+                UserAttributes=[
+            {"Name": "email", "Value": email},
+            {"Name": "email_verified", "Value": "true"},
+        ],
                 DesiredDeliveryMediums=["EMAIL"],
             )
             username = str((response.get("User") or {}).get("Username") or email)
