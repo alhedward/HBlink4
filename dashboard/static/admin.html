@@ -543,6 +543,8 @@
             return;
         }
         state.csrf = status.csrf_token;
+        $('newPasswordPanel').classList.add('hidden');
+        $('resetPanel').classList.add('hidden');
         $('logoutBtn').classList.remove('hidden');
         if (!status.config_backup_ready) {
             state.backupReady = false;
