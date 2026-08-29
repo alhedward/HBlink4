@@ -195,6 +195,7 @@ def test_public_dashboard_config_does_not_expose_admin(monkeypatch):
     )
     result = asyncio.run(server.get_config())
     assert result["dashboard_title"] == "Test"
+    assert result["dashboard_version"] == server.DASHBOARD_VERSION
     assert "admin" not in result
     assert "password_hash" not in json.dumps(result)
 
