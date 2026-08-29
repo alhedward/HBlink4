@@ -6,69 +6,89 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current feature work: feat/cognito-local-breakglass
+Current feature work: fix/cognito-first-login-panel (PR #6)
 Dashboard semantic version: 1.2.0
 
 Known-good baseline
 -------------------
 - main includes the permanent GitHub Actions full regression workflow merged as 1da1b452e30dd98f4464c529de4b0951e2d7503e.
-- Cognito-backed multi-admin dashboard support is merged on main.
-- Verified-email Cognito invitation support is merged on main as 5acb3b4c5b87b669431e262e7ea5080a98df3b59.
+- Cognito-backed multi-admin dashboard support and verified-email invitation support are merged on main.
+- Permanent local PBKDF2 break-glass support is merged on main as 6eedec8af37aa2efc8321a403d88ef473d20c16c.
+- hblink-website production currently pins HBlink4 to 6eedec8af37aa2efc8321a403d88ef473d20c16c.
+- Production dashboard authentication is Cognito, with the exact configured legacy local username retained as the permanent PBKDF2 break-glass account.
+- The first production Cognito administrator has completed the temporary-password first-login flow successfully.
 - Dashboard semantic version 1.2.0 is exposed through /api/config and shown on both public and administrator dashboards.
-- Full Noble/Python 3.12 regression testing has passed with the real project dependencies.
-- hblink-website currently pins production to 5acb3b4c5b87b669431e262e7ea5080a98df3b59 while the local-break-glass change is being reviewed.
+- PR #6 full Python 3.12 regression run passed 130 tests after the panel, TOTP, WebAuthn, profile and personalised-invitation changes.
 
 Admin authentication
 --------------------
 - Existing HBlink4 /admin page remains the administrator entry point.
 - Existing local HttpOnly session cookie, CSRF protection, login throttling, mandatory full-config backup gate, config restore protection and fixed restart authorization remain in place.
-- auth_provider=local uses the existing PBKDF2 administrator credential.
-- auth_provider=cognito uses an Amazon Cognito User Pool behind the same HBlink4 login UI.
+- auth_provider=cognito uses Amazon Cognito for named administrators and retains the configured local username/password hash as a reserved break-glass path.
+- The exact local break-glass username is authenticated locally and is never sent to Cognito. A failed password for that reserved username does not fall through to Cognito.
 - Cognito administrators must belong to the configurable HBlink4Admins group.
-- Cognito mode provides named users, emailed invitations, temporary-password first login, self-service password reset, admin listing, invite resend and administrator-triggered password reset.
-- Cognito first-login Session values remain server-side; the browser receives only an opaque short-lived challenge token.
-- Optional Cognito app-client secret support exists, but production intentionally uses no client secret; EC2 IAM authorizes the server-side admin authentication operations.
+- Cognito challenge sessions remain server-side; browser challenge tokens are opaque and short-lived.
+- Cognito access tokens used for self-service security/profile operations are stored only in the existing in-memory administrator session, never browser JavaScript or persistent files.
+- dashboard/admin_app.py is the top-level ASGI application. It composes the existing password/break-glass/TOTP layer, WebAuthn security-key layer and administrator profile/invitation layer.
 
-Current feature: permanent local break-glass login
---------------------------------------------------
-- feat/cognito-local-breakglass adds an ASGI authentication wrapper used by run_dashboard.py.
-- When auth_provider=cognito, the exact configured legacy local username is reserved as the PBKDF2 break-glass account.
-- That reserved username is authenticated locally and is never sent to Cognito.
-- A wrong password for the reserved local username fails locally and is never retried against Cognito.
-- Every other username is replayed unchanged to the normal HBlink4 Cognito login route.
-- The break-glass account therefore remains usable during a Cognito service outage as long as the deployed Cognito configuration itself remains present.
-- The deployment repository already preserves the local PBKDF2 hash in its root-only environment/SSM path when Cognito is selected.
-- Production must remain auth_provider=local until this change passes the full regression workflow, is merged, pinned by hblink-website and deployed.
+PR #6: admin onboarding and optional MFA cleanup
+------------------------------------------------
+- Fixes the production-observed first-login bug where NEW_PASSWORD_REQUIRED completed successfully but the permanent-password panel remained visible above the authenticated backup gate.
+- refreshStatus() now tears down newPasswordPanel/resetPanel whenever an authenticated session is established.
+- Adds optional TOTP authenticator-app MFA. Administrators can enroll/verify/disable it themselves; pool-level MFA is intended to be OPTIONAL, not mandatory.
+- Adds FIDO2/WebAuthn security-key/passkey registration, listing/removal and sign-in through Cognito USER_AUTH/WEB_AUTHN, suitable for YubiKey and platform passkeys.
+- WebAuthn browser ceremonies remain native navigator.credentials operations. HBlink4 never receives or stores authenticator private keys.
+- Adds lazy Cognito administrator profile cleanup using standard attributes: given_name, family_name, nickname (callsign), plus existing email.
+- If an authenticated Cognito administrator is missing first name, last name or callsign, the dashboard can collect and save those fields before that administrator sends an invitation.
+- Future dashboard invitations collect invitee first name, last name, callsign and email and store those values in Cognito standard attributes.
+- Future dashboard invitations suppress Cognito's stock invite delivery, create the temporary password server-side, and send a personalised SES multipart HTML/plain-text email.
+- Invitation sender is configured by HBLINK4_ADMIN_INVITE_FROM; production target is webmaster@sgars.vk2ale.com.
+- Invitation email includes https://dmr.vk2ale.com/admin, temporary credentials, 12-character permanent-password rules, 7-day temporary-password validity, optional MFA information, and the inviting administrator's name/callsign signature. Reply-To is the inviter's Cognito email.
+- The local PBKDF2 break-glass account intentionally has no Cognito profile/MFA requirement and cannot sign personalised Cognito invitations.
+- RF/core routing code is unchanged.
+
+Infrastructure dependency before deploying PR #6
+-------------------------------------------------
+- hblink-website must upgrade the existing user pool from LITE to ESSENTIALS in place before WebAuthn is used.
+- User-pool MFA must be OPTIONAL with software-token MFA enabled.
+- Sign-in policy must allow PASSWORD and WEB_AUTHN and the app client must allow ALLOW_USER_AUTH while retaining ALLOW_ADMIN_USER_PASSWORD_AUTH.
+- WebAuthn relying-party ID must be dmr.vk2ale.com with user verification required. Production deployment should verify the desired passkey factor configuration after apply.
+- sgars.vk2ale.com must be an SES-verified/DKIM-authenticated identity managed through Route 53, and the EC2 runtime role must be able to send only the required SES mail path.
+- Cognito email delivery for recovery/reset mail should use the verified SGARS sender rather than the default Cognito no-reply address.
+- The dashboard service environment must provide HBLINK4_ADMIN_INVITE_FROM=webmaster@sgars.vk2ale.com and HBLINK4_ADMIN_URL=https://dmr.vk2ale.com/admin.
+- EC2 Cognito IAM must include the additional admin operations used by personalised invite resend/profile management where IAM authorization applies.
 
 Deployment state
 ----------------
-- hblink-website production is currently green and healthy.
-- The Cognito user pool, client, HBlink4Admins group and IAM wiring exist.
+- hblink-website production is green and healthy on i-0818c2b22deb877c3 with production EIP 54.206.153.208.
+- Cognito is the active dashboard authentication provider.
+- The Cognito user pool, client, HBlink4Admins group and existing IAM wiring exist.
 - Cognito password policy is 12+ characters with uppercase, lowercase and number required; symbols are optional.
 - Cognito temporary invitation passwords are valid for 7 days.
-- The Cognito invitation template includes https://dmr.vk2ale.com/admin and the permanent-password rules.
-- Production dashboard authentication is still local PBKDF2 until the first Cognito administrator has been invited and activation is deliberately performed.
+- The local PBKDF2 break-glass credential remains retained through the root-only deployment environment/SSM path.
+- PR #6 is not production until it is merged, pinned by hblink-website and deployed after the matching Cognito/SES infrastructure update.
 
 Next steps
 ----------
-1. Run the complete HBlink4 regression workflow for feat/cognito-local-breakglass.
-2. Merge the feature only if CI is fully green.
-3. Pin the resulting HBlink4 main commit in hblink-website and deploy it while dashboard_auth_provider remains local.
-4. Bootstrap the first real Cognito administrator by email.
-5. Change hblink-website dashboard_auth_provider to cognito in a separate reviewed production deployment.
-6. Verify both the named Cognito account and the reserved local PBKDF2 break-glass account can authenticate.
-7. Verify Cognito password reset, administrator listing/invites, mandatory config backup/edit and HBlink4 restart controls.
-8. Keep the local PBKDF2 credential permanently retained as the emergency authentication path.
+1. Merge PR #6 only after the final branch head passes the complete regression workflow.
+2. Update hblink-website on a feature branch with Cognito Essentials, OPTIONAL TOTP, PASSWORD+WEB_AUTHN sign-in, ALLOW_USER_AUTH, SES/DKIM for sgars.vk2ale.com, webmaster@sgars.vk2ale.com sender wiring, runtime IAM and the merged HBlink4 revision.
+3. Run Terraform/safety CI and inspect the production Terraform plan. Reject any unexpected EC2 replacement, EIP move, Cognito user-pool replacement or destructive change.
+4. Deploy to the existing active green production instance and verify the live EIP remains attached to green.
+5. Verify the original first-login panel bug is fixed.
+6. Complete the current administrator profile with first name, last name and callsign, then test a personalised HTML invitation.
+7. Test optional TOTP enrollment/login and a WebAuthn/YubiKey or passkey registration/sign-in.
+8. Verify the reserved local PBKDF2 break-glass login still works independently of Cognito MFA.
 
 Outstanding roadmap
 -------------------
-1. Finish Cognito activation with the permanent local break-glass path retained.
+1. Verify delivered SGARS invitation/reset email headers and DKIM/DMARC alignment after SES deployment.
 2. Add Parrot service on TG 9990.
 3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
 
 Safety notes
 ------------
 - Full configuration backups contain passphrases and must be stored securely.
-- Do not expose password hashes, Cognito client secrets or full config through public dashboard APIs.
-- Preserve HBlink4 hot-path behaviour; administrator/Cognito calls are control-plane only.
+- Do not expose password hashes, Cognito client secrets, access tokens, WebAuthn private material or full config through public dashboard APIs.
+- Preserve HBlink4 hot-path behaviour; administrator/Cognito/SES calls are control-plane only.
 - Never make an authentication failure for the reserved local username fall through to Cognito; keep both paths explicit and auditable.
+- Keep MFA optional at user-pool level unless a future reviewed change explicitly chooses enforcement.

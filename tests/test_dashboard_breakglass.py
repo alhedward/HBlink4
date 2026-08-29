@@ -1,27 +1,28 @@
 import json
+from types import SimpleNamespace
 
-from dashboard import server
+from dashboard import auth_app, server
 from dashboard.admin import AdminSessionManager, LoginRateLimiter, hash_password
 from dashboard.auth_app import BreakGlassAdminMiddleware
 
 
-def _scope():
+def _scope(path="/api/admin/login", method="POST", headers=None):
     return {
         "type": "http",
         "http_version": "1.1",
-        "method": "POST",
+        "method": method,
         "scheme": "https",
-        "path": "/api/admin/login",
-        "raw_path": b"/api/admin/login",
+        "path": path,
+        "raw_path": path.encode(),
         "query_string": b"",
-        "headers": [(b"content-type", b"application/json")],
+        "headers": headers or [(b"content-type", b"application/json")],
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 443),
     }
 
 
-async def _invoke(app, payload):
-    raw = json.dumps(payload).encode("utf-8")
+async def _invoke(app, payload, path="/api/admin/login", method="POST", headers=None):
+    raw = json.dumps(payload).encode("utf-8") if payload is not None else b""
     received = False
     sent = []
 
@@ -35,11 +36,15 @@ async def _invoke(app, payload):
     async def send(message):
         sent.append(message)
 
-    await app(_scope(), receive, send)
+    await app(_scope(path=path, method=method, headers=headers), receive, send)
     status = next(item["status"] for item in sent if item["type"] == "http.response.start")
-    headers = dict(next(item["headers"] for item in sent if item["type"] == "http.response.start"))
-    body = b"".join(item.get("body", b"") for item in sent if item["type"] == "http.response.body")
-    return status, headers, json.loads(body) if body else None
+    response_headers = dict(
+        next(item["headers"] for item in sent if item["type"] == "http.response.start")
+    )
+    body = b"".join(
+        item.get("body", b"") for item in sent if item["type"] == "http.response.body"
+    )
+    return status, response_headers, json.loads(body) if body else None
 
 
 def _configure_cognito_with_local_fallback(monkeypatch):
@@ -64,6 +69,7 @@ def _configure_cognito_with_local_fallback(monkeypatch):
     )
     monkeypatch.setattr(server, "admin_sessions", AdminSessionManager(60))
     monkeypatch.setattr(server, "login_limiter", LoginRateLimiter())
+    monkeypatch.setattr(auth_app, "_mfa_bridge_instance", None)
 
 
 def test_breakglass_local_admin_login_works_while_cognito_is_primary(monkeypatch):
@@ -103,22 +109,37 @@ def test_breakglass_wrong_password_does_not_fall_through_to_cognito(monkeypatch)
     assert body == {"detail": "Invalid username or password"}
 
 
-def test_nonlocal_username_is_replayed_unchanged_to_cognito_app(monkeypatch):
+def test_nonlocal_username_can_return_software_token_mfa_challenge(monkeypatch):
     import asyncio
 
     _configure_cognito_with_local_fallback(monkeypatch)
     seen = {}
 
-    async def downstream(scope, receive, send):
-        message = await receive()
-        seen["payload"] = json.loads(message["body"])
-        await send({"type": "http.response.start", "status": 204, "headers": []})
-        await send({"type": "http.response.body", "body": b""})
+    class FakeBridge:
+        def authenticate(self, username, password):
+            seen["credentials"] = (username, password)
+            return SimpleNamespace(
+                status="mfa_required",
+                challenge_token="browser-safe-token",
+                required_attributes=(),
+                identity=None,
+                access_token=None,
+            )
 
-    app = BreakGlassAdminMiddleware(downstream)
-    payload = {"username": "tony@example.com", "password": "cognito-secret"}
-    status, _, body = asyncio.run(_invoke(app, payload))
+    monkeypatch.setattr(auth_app, "_mfa_bridge", lambda: FakeBridge())
 
-    assert status == 204
-    assert body is None
-    assert seen["payload"] == payload
+    async def unexpected_downstream(scope, receive, send):
+        raise AssertionError("Cognito login should be handled by the auth wrapper")
+
+    app = BreakGlassAdminMiddleware(unexpected_downstream)
+    status, _, body = asyncio.run(
+        _invoke(app, {"username": "tony@example.com", "password": "cognito-secret"})
+    )
+
+    assert status == 200
+    assert seen["credentials"] == ("tony@example.com", "cognito-secret")
+    assert body == {
+        "ok": False,
+        "challenge": "SOFTWARE_TOKEN_MFA",
+        "challenge_token": "browser-safe-token",
+    }
