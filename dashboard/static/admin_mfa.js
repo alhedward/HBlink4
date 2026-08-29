@@ -1,6 +1,10 @@
 (() => {
     'use strict';
 
+    state.totpEnabled = false;
+    state.passkeyCount = 0;
+    state.securitySettingsExpanded = false;
+
     function buildMfaLoginPanel() {
         if ($('mfaLoginPanel')) return;
         const panel = document.createElement('section');
@@ -27,38 +31,81 @@
         panel.id = 'mfaSecurityPanel';
         panel.className = 'card hidden';
         panel.innerHTML = `
-            <strong>Account security</strong>
-            <p class="subtle" style="margin-bottom: 10px;">
-                Authenticator-app MFA is optional. Once enabled for your Cognito account,
-                you will enter a 6-digit code after your password on future logins.
-            </p>
-            <div id="mfaSecurityStatus" class="subtle"></div>
-            <div class="actions" style="margin-top: 12px;">
-                <button id="mfaSetupBtn" type="button">Set up authenticator MFA</button>
-                <button id="mfaDisableBtn" class="danger hidden" type="button">Disable authenticator MFA</button>
+            <div id="mfaSecurityCompact" class="hidden">
+                <div class="actions" style="justify-content: space-between;">
+                    <div>
+                        <strong>Account security</strong>
+                        <div id="mfaCompactStatus" class="subtle" style="margin-top: 4px;"></div>
+                    </div>
+                    <button id="mfaChangeBtn" class="secondary" type="button">Change MFA</button>
+                </div>
             </div>
-            <div id="mfaSetupBox" class="hidden" style="margin-top: 16px; border-top: 1px solid #334155; padding-top: 14px;">
-                <p style="margin-top: 0;">
-                    Add a new account in your authenticator app, then enter this secret manually.
-                    The secret is shown only during setup.
+            <div id="mfaSecurityDetails">
+                <strong>Account security</strong>
+                <p class="subtle" style="margin-bottom: 10px;">
+                    MFA is optional. Use an authenticator app, a FIDO2 security key/passkey,
+                    or both for this Cognito administrator account.
                 </p>
-                <label for="mfaSecret">Authenticator secret</label>
-                <input id="mfaSecret" readonly autocomplete="off" spellcheck="false"
-                       style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
-                <details style="margin-top: 10px;">
-                    <summary class="subtle">Show otpauth URI</summary>
-                    <div id="mfaOtpUri" class="match" style="margin-top: 8px; overflow-wrap: anywhere;"></div>
-                </details>
-                <label for="mfaVerifyCode">Enter the current 6-digit code</label>
-                <input id="mfaVerifyCode" inputmode="numeric" autocomplete="one-time-code"
-                       pattern="[0-9]{6}" maxlength="6">
+                <div id="mfaSecurityStatus" class="subtle"></div>
                 <div class="actions" style="margin-top: 12px;">
-                    <button id="mfaVerifyBtn" type="button">Verify and enable MFA</button>
-                    <button id="mfaSetupCancelBtn" class="secondary" type="button">Cancel</button>
+                    <button id="mfaSetupBtn" type="button">Set up authenticator MFA</button>
+                    <button id="mfaDisableBtn" class="danger hidden" type="button">Disable authenticator MFA</button>
+                    <button id="mfaDoneBtn" class="secondary hidden" type="button">Done</button>
+                </div>
+                <div id="mfaSetupBox" class="hidden" style="margin-top: 16px; border-top: 1px solid #334155; padding-top: 14px;">
+                    <p style="margin-top: 0;">
+                        Add a new account in your authenticator app, then enter this secret manually.
+                        The secret is shown only during setup.
+                    </p>
+                    <label for="mfaSecret">Authenticator secret</label>
+                    <input id="mfaSecret" readonly autocomplete="off" spellcheck="false"
+                           style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
+                    <details style="margin-top: 10px;">
+                        <summary class="subtle">Show otpauth URI</summary>
+                        <div id="mfaOtpUri" class="match" style="margin-top: 8px; overflow-wrap: anywhere;"></div>
+                    </details>
+                    <label for="mfaVerifyCode">Enter the current 6-digit code</label>
+                    <input id="mfaVerifyCode" inputmode="numeric" autocomplete="one-time-code"
+                           pattern="[0-9]{6}" maxlength="6">
+                    <div class="actions" style="margin-top: 12px;">
+                        <button id="mfaVerifyBtn" type="button">Verify and enable MFA</button>
+                        <button id="mfaSetupCancelBtn" class="secondary" type="button">Cancel</button>
+                    </div>
                 </div>
             </div>`;
         $('backupPanel').insertAdjacentElement('afterend', panel);
     }
+
+    function securityConfigured() {
+        return !!state.totpEnabled || Number(state.passkeyCount || 0) > 0;
+    }
+
+    function compactSecurityText() {
+        const methods = [];
+        if (state.totpEnabled) methods.push('authenticator app');
+        if (Number(state.passkeyCount || 0) > 0) {
+            methods.push(`${state.passkeyCount} security key/passkey${state.passkeyCount === 1 ? '' : 's'}`);
+        }
+        return methods.length ? `MFA configured: ${methods.join(' + ')}.` : 'MFA is not configured.';
+    }
+
+    window.updateAdminSecurityPanel = function() {
+        const panel = $('mfaSecurityPanel');
+        if (!panel) return;
+        const configured = securityConfigured();
+        const compact = $('mfaSecurityCompact');
+        const details = $('mfaSecurityDetails');
+        $('mfaCompactStatus').textContent = compactSecurityText();
+
+        if (configured && !state.securitySettingsExpanded) {
+            compact.classList.remove('hidden');
+            details.classList.add('hidden');
+        } else {
+            compact.classList.add('hidden');
+            details.classList.remove('hidden');
+        }
+        $('mfaDoneBtn').classList.toggle('hidden', !(configured && state.securitySettingsExpanded));
+    };
 
     function showMfaLogin(challengeToken, message = 'Enter your authenticator code to continue.') {
         state.mfaChallengeToken = challengeToken;
@@ -83,6 +130,7 @@
         try {
             const result = await api('/api/admin/mfa/status');
             panel.classList.remove('hidden');
+            state.totpEnabled = !!result.enabled;
             $('mfaSecurityStatus').textContent = result.enabled
                 ? 'Authenticator-app MFA is enabled for this administrator.'
                 : 'Authenticator-app MFA is not enabled for this administrator.';
@@ -94,19 +142,33 @@
                 $('mfaOtpUri').textContent = '';
                 $('mfaVerifyCode').value = '';
             }
+            window.updateAdminSecurityPanel();
         } catch (error) {
             if (error.status === 401 || error.status === 409) {
                 panel.classList.add('hidden');
+                state.totpEnabled = false;
                 return;
             }
             panel.classList.remove('hidden');
+            state.securitySettingsExpanded = true;
             $('mfaSecurityStatus').textContent = `MFA status unavailable: ${error.message}`;
+            window.updateAdminSecurityPanel();
         }
     }
 
     buildMfaLoginPanel();
     buildMfaSecurityPanel();
     state.mfaChallengeToken = null;
+
+    $('mfaChangeBtn').addEventListener('click', () => {
+        state.securitySettingsExpanded = true;
+        window.updateAdminSecurityPanel();
+    });
+
+    $('mfaDoneBtn').addEventListener('click', () => {
+        state.securitySettingsExpanded = false;
+        window.updateAdminSecurityPanel();
+    });
 
     // Replace the original login submit path in capture phase so a Cognito MFA
     // challenge is handled before the legacy bubble listener sees the response.
@@ -200,6 +262,8 @@
     });
 
     $('mfaSetupBtn').addEventListener('click', () => withBusy(async () => {
+        state.securitySettingsExpanded = true;
+        window.updateAdminSecurityPanel();
         const result = await api('/api/admin/mfa/setup/start', {
             method: 'POST',
             headers: { 'X-CSRF-Token': state.csrf }
@@ -223,6 +287,7 @@
         $('mfaOtpUri').textContent = '';
         $('mfaVerifyCode').value = '';
         $('mfaSetupBox').classList.add('hidden');
+        state.securitySettingsExpanded = false;
         showMessage('Authenticator-app MFA is now enabled for your account.', 'success');
         await refreshMfaSecurity();
     }));
@@ -233,6 +298,9 @@
         $('mfaVerifyCode').value = '';
         $('mfaSetupBox').classList.add('hidden');
         clearMessage();
+        state.securitySettingsExpanded = securityConfigured();
+        if (securityConfigured()) state.securitySettingsExpanded = false;
+        window.updateAdminSecurityPanel();
     });
 
     $('mfaDisableBtn').addEventListener('click', () => {
