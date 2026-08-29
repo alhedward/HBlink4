@@ -21,12 +21,32 @@
         badges.insertBefore(badge, badges.firstChild);
     }
 
-    function renderAdminCard(parrot) {
-        const editor = document.getElementById('editorPanel');
-        if (!editor || document.getElementById(`${SERVICE_ID}Card`)) return;
+    function renderDashboardCard(parrot) {
+        const stats = document.querySelector('.stats-bar');
+        if (!stats || document.getElementById(`${SERVICE_ID}PublicCard`)) return;
 
         const card = document.createElement('section');
-        card.id = `${SERVICE_ID}Card`;
+        card.id = `${SERVICE_ID}PublicCard`;
+        card.className = 'card';
+        card.innerHTML = `
+            <h2>Local DMR Services</h2>
+            <div style="display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+                <div class="connection-status connected" style="flex:none;">🦜 TG${parrot.talkgroup}</div>
+                <div>
+                    <strong>${parrot.name || 'Parrot / Echo Test'}</strong>
+                    <div style="color:#94a3b8; font-size:12px; margin-top:4px; line-height:1.45;">Local-only echo test. Key TG${parrot.talkgroup}, speak, then unkey; the completed call is played back only to the originating repeater or hotspot. This talkgroup is not routed to other repeaters or external DMR networks.</div>
+                </div>
+            </div>
+        `;
+        stats.insertAdjacentElement('afterend', card);
+    }
+
+    function renderAdminCard(parrot) {
+        const editor = document.getElementById('editorPanel');
+        if (!editor || document.getElementById(`${SERVICE_ID}AdminCard`)) return;
+
+        const card = document.createElement('section');
+        card.id = `${SERVICE_ID}AdminCard`;
         card.className = 'card';
         card.innerHTML = `
             <strong>Local DMR services</strong>
@@ -47,6 +67,7 @@
             const parrot = parrotService(body.services);
             if (!parrot) return;
             renderDashboardBadge(parrot);
+            renderDashboardCard(parrot);
             renderAdminCard(parrot);
         } catch (_) {
             // Local-service visibility is informational; never break the main UI.
