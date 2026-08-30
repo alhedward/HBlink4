@@ -23,6 +23,7 @@ from bitarray import bitarray
 from dmr_utils3 import bptc, golay, qr
 from dmr_utils3.const import BS_DATA_SYNC, BS_VOICE_SYNC
 
+from .parrot_ambe import canonical_to_dmr_frame
 from .lc import LC_OPT_GROUP_DEFAULT
 
 
@@ -30,32 +31,8 @@ AMBE_FRAME_BYTES = 9
 AMBE_FRAMES_PER_BURST = 3
 DMR_VOICE_INTERVAL_SECONDS = 0.06
 
-# DMR AMBE+2 on-air interleave schedule. OpenDMR emits each 72-bit frame in
-# canonical/DVSI A(24)+B(23)+C2(11)+C3(14) order; HomeBrew DMRD voice payloads
-# carry those channel-coded bits in the ETSI/DSD 36-dibit interleaved order.
-# These fixed indices match dmr_utils3.ambe_utils and the long-standing DSD
-# decoder schedule.
-_AMBE_INTERLEAVE_W = (
-    0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
-    0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 2,
-    0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2,
-)
-_AMBE_INTERLEAVE_X = (
-    23, 10, 22, 9, 21, 8, 20, 7, 19, 6, 18, 5,
-    17, 4, 16, 3, 15, 2, 14, 1, 13, 0, 12, 10,
-    11, 9, 10, 8, 9, 7, 8, 6, 7, 5, 6, 4,
-)
-_AMBE_INTERLEAVE_Y = (
-    0, 2, 0, 2, 0, 2, 0, 2, 0, 3, 0, 3,
-    1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3,
-    1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3,
-)
-_AMBE_INTERLEAVE_Z = (
-    5, 3, 4, 2, 3, 1, 2, 0, 1, 13, 0, 12,
-    22, 11, 21, 10, 20, 9, 19, 8, 18, 7, 17, 6,
-    16, 5, 15, 4, 14, 3, 13, 2, 12, 1, 11, 0,
-)
-
+# OpenDMR assets are canonical A+B+C frames. Conversion to DMR on-air
+# channel coding is isolated in parrot_ambe.py and validated independently.
 # HomeBrew DMRD byte-15 values before the TS2 bit is applied.
 _HEAD_BITS = 0b00100001
 _BURST_BITS = (0b00010000, 0b00000001, 0b00000010,
@@ -202,38 +179,9 @@ def _validate_asset(name: str, payload: bytes) -> None:
 
 
 def _interleave_ambe_frame(frame: bytes) -> bytes:
-    """Convert one OpenDMR canonical 72-bit frame to DMR on-air bit order."""
+    """Convert one validated OpenDMR canonical frame to DMR on-air order."""
 
-    if len(frame) != AMBE_FRAME_BYTES:
-        raise ValueError("canonical AMBE frame must be exactly 9 bytes")
-
-    canonical = [
-        (byte >> (7 - bit_index)) & 1
-        for byte in frame
-        for bit_index in range(8)
-    ]
-    rows = [[0] * 24 for _ in range(4)]
-
-    # A and B are already MSB-first codewords in OpenDMR's canonical stream.
-    rows[0][:24] = canonical[:24]
-    rows[1][:23] = canonical[24:47]
-
-    # The historical DMR interleave matrix indexes C2/C3 in the opposite
-    # direction to their canonical serial representation.
-    for index, bit in enumerate(canonical[47:58]):
-        rows[2][10 - index] = bit
-    for index, bit in enumerate(canonical[58:72]):
-        rows[3][13 - index] = bit
-
-    interleaved = bitarray(endian="big")
-    for index in range(36):
-        interleaved.append(
-            rows[_AMBE_INTERLEAVE_W[index]][_AMBE_INTERLEAVE_X[index]]
-        )
-        interleaved.append(
-            rows[_AMBE_INTERLEAVE_Y[index]][_AMBE_INTERLEAVE_Z[index]]
-        )
-    return interleaved.tobytes()
+    return canonical_to_dmr_frame(frame)
 
 
 def assemble_ambe_frames(
