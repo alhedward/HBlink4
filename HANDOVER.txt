@@ -6,85 +6,90 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current work: production acceptance testing for the deployed parrot dashboard fix
-Dashboard semantic version: 1.3.0
+Current main baseline: 0494ecb21a74ca29253120b34faf5fc9aacb8109
+Current feature branch: feature/parrot-voice-telemetry-timeout-fix
+Feature branch before this handover update: 95937b3523a1ed2c7378236dafc34a8e69a3edae
+Dashboard semantic version on this feature: 1.3.2
 
-Known-good production baseline
-------------------------------
-- The deployed HBlink4 application revision is d08214fd9329f680e14f81859ba31efbb0c9bbd5 (PR #11, parrot dashboard live-activity/version fix).
-- hblink-website production deployment main is 9bab7956a40a4af2b02fa4a62adab45e6d65bfb0 (PR #27), which pins that exact HBlink4 revision.
-- hblink-website Terraform main validation run 33287316081 completed successfully on 2026-08-30.
-- Production CD run 33287346615 completed successfully on 2026-08-30, including the fail-closed Terraform plan gate, application deployment, Cognito MFA/WebAuthn verification and temporary live-config cleanup.
-- Production remains on the established green deployment path with EIP 54.206.153.208; live EIP reconciliation passed during the deployment.
-- The production parrot itself was RF-tested successfully before this dashboard follow-up: TG9990 records and echoes a completed local call back to the originating endpoint.
-- Dashboard authentication remains Cognito, with the configured local PBKDF2 account retained as the permanent break-glass path.
+Production state
+----------------
+- The deployment repository remains https://github.com/alhedward/hblink-website.git and is authoritative for the live EC2 revision.
+- Do not infer production has this feature merely because it is merged in HBlink4. Production must be pinned and deployed through hblink-website after HBlink4 PR/CI succeeds.
+- The last directly verified production application during the TG9990 diagnostics was d08214fd9329f680e14f81859ba31efbb0c9bbd5, with production EIP 54.206.153.208.
+- hblink-website has an undeployed/parrot-dashboard recovery branch that pins HBlink4 0494ecb21a74ca29253120b34faf5fc9aacb8109; re-check current deployment state before any new production change rather than assuming that branch was deployed.
+- Production runs HBlink4 natively in /opt/hblink4 under hardened systemd services, not Docker.
+- Live /opt/hblink4/app/config/config.json is operator-owned. Preserve it across upgrades and mutate only explicitly managed local-service keys through the deployment policy reconciler.
 
-Parrot / echo service
----------------------
-- HBlink4 has an in-process local DMR parrot service based on the classic HBlink3 playback behaviour without running a second legacy HBLink daemon.
-- hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence only to the originating repeater/hotspot after a proper voice terminator.
-- Production uses TG9990, a 2-second delay, 60-ms packet cadence and a 120-second recording cap.
-- TG9990 is intentionally absent from ordinary routed TG lists. The parrot receives an empty normal route cache and is never fanned out to another local repeater, HomeBrew outbound or OpenBridge trunk.
-- A numerically identical TG received from an external trunk does not invoke the local parrot.
-- Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
-- Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
-- Parrot lifecycle payloads contain the originating DMR timeslot. The dashboard reports it explicitly as TS1 or TS2 throughout recording/playback activity.
+TG9990 parrot timeout/cancellation fix
+--------------------------------------
+- The previous playback guard treated get_slot_stream(slot) == None as a conflict. Normal HBlink4 hang-time cleanup legitimately removes an ended StreamState, so long echoes could play successfully and then emit Test cancelled once that cleanup occurred.
+- hblink4/parrot.py now treats a missing StreamState as a free/safe slot. Cancellation occurs only when an actual conflicting active/reused stream is present or the originating repeater disconnects.
+- Regression coverage proves normal stream removal is safe, the original ended stream is safe, an active same stream conflicts, and a different/reused stream conflicts.
+- The 120-second parrot recording cap is unchanged; it was not the cause of the observed long-call cancellation.
+
+Voice RF telemetry
+------------------
+- Optional voice telemetry is independent of the parrot enable flag and is disabled by default in HBlink4 sample configuration.
+- Runtime configuration keys under parrot are voice_telemetry_enabled, voice_telemetry_source_id and voice_telemetry_pause_seconds.
+- The report speaks average BER, average RSSI and the originating timeslot. Example: "Bit Error Rate zero point four percent. Received Signal Strength Indication minus seventy-two D B M. Timeslot two. Seventy threes."
+- Missing RF measurements are spoken as unavailable instead of synthesizing a value.
+- If RF becomes active while the optional report is running, HBlink4 stops the report and yields the slot; a successfully completed echo remains successful rather than becoming a parrot cancellation.
+- Voice lifecycle events are parrot_telemetry_started, parrot_telemetry_complete and parrot_telemetry_cancelled.
+
+Voice assets and DMR framing
+----------------------------
+- Production does not require gTTS, ffmpeg, OpenDMR, network TTS access or a runtime vocoder.
+- hblink4/parrot_voice_assets.tar.gz contains 210 pre-encoded prompt assets: fixed phrases plus number_0 through number_200.
+- scripts/generate_parrot_voice_assets.py is build-time only and uses Australian-English gTTS (lang=en, tld=com.au), 8 kHz signed 16-bit little-endian mono PCM and OpenDMR.
+- OpenDMR is pinned to d28164b39ba4d91ad5948ff22707937f8944f70f.
+- OpenDMR emits canonical/DVSI AMBE order. hblink4/parrot_voice.py applies the standard DMR 36-dibit AMBE interleave before constructing HomeBrew DMRD voice bursts.
+- The interleave regression verifies canonical 49400f09a0e0000000 maps to the standard DMR silence frame acaa40200044408080.
+- Generated calls build three Voice Headers, A-F voice bursts at 60-ms cadence and a Voice Terminator with proper Link Control, originating timeslot and originating Colour Code.
+- See docs/parrot_voice_telemetry.md for operator/build details and provenance notes.
 
 Dashboard local-service activity
 --------------------------------
-- `/api/local-services` exposes only non-secret enabled local-service metadata from the live HBlink4 config.
-- The public/admin Local DMR Services card identifies TG9990 as a local-only Parrot / Echo Test.
-- PR #10 added monitoring-only parrot lifecycle events and BER/RSSI activity telemetry, but production testing showed the Local DMR Services card could remain at Ready during an otherwise successful RF parrot session.
-- PR #11 fixes that dashboard integration. On the public dashboard the local-service helper subscribes to the already-established main dashboard WebSocket rather than relying on a second silent informational socket; the administrator page retains a standalone WebSocket fallback.
-- Normal stream-event fields are normalised (`rf_src` -> `src_id`, `packets` -> `packet_count`) for the fallback activity path.
-- Expected UI lifecycle is Ready -> Recording -> Preparing playback -> Playing back -> Test complete (or Test cancelled when appropriate).
-- Activity identity includes source radio/callsign when known, originating repeater and TS1/TS2. Metrics include duration, packet count and existing BER/RSSI summaries when supplied by the endpoint.
-- The composed deployed dashboard now reports semantic version 1.3.0 and uses local-services asset cache-buster `20260830-parrot-live-2`.
+- Dashboard version 1.3.2 uses asset cache-buster 20260830-parrot-live-4.
+- The local-service card now includes a Voice report phase.
+- Expected lifecycle is Ready -> Recording -> Preparing playback -> Playing back -> Voice report -> Test complete -> Ready.
+- Terminal Complete/Cancelled state expires after eight seconds in both the server-backed recovery path and the WebSocket UI, preventing a stale Test cancelled/complete state.
+- TS1/TS2 remains explicit and BER/RSSI metadata remains monitoring-only; no DMR packet contents or secrets are exposed through the public activity API.
 
-Regression coverage
--------------------
-- HBlink4 PR #11 passed the complete Python 3.12 regression workflow before merge.
-- tests/test_parrot_activity_dashboard.py now verifies lifecycle payload metadata, dashboard receiver passthrough, shared dashboard WebSocket subscription, fallback field normalisation, timeslot display and dashboard release/version wiring.
-- No DMR routing or packet/audio exposure was introduced by the dashboard fix.
+Regression status
+-----------------
+- Asset-generation workflow run 33300690309 successfully generated all 210 AMBE assets and passed the complete suite after correcting a test fixture timestamp.
+- RF framing/interleave workflow run 33300919461 passed 171/171 tests on Python 3.12.14. The only output was four pre-existing FastAPI on_event deprecation warnings.
+- That run also removed its one-shot workflow and patch script before committing the interleave fix.
+- Temporary implementation/transfer workflows and patch scripts are not part of the final feature diff.
 
-Production acceptance still required
-------------------------------------
-1. RF-test TG9990 while watching Local DMR Services.
-2. Confirm the card changes Recording -> Preparing playback -> Playing back -> Test complete.
-3. Confirm the actual originating Timeslot is displayed as TS1 or TS2 and remains consistent throughout the session.
-4. Confirm source radio/repeater, duration/packet count and BER/RSSI appear where telemetry is available.
-5. Confirm the dashboard displays v1.3.0.
-6. Confirm the echo is still returned only to the originating repeater/hotspot and TG9990 remains absent from ordinary routed TG lists.
+Deployment requirements
+-----------------------
+1. Merge this HBlink4 feature only after normal pull-request regression succeeds.
+2. In hblink-website, create a fresh deployment branch from current main and pin the exact merged HBlink4 main SHA.
+3. Extend the existing config/hblink.json parrot policy with voice_telemetry_enabled=true, voice_telemetry_source_id=9990 and voice_telemetry_pause_seconds=0.45.
+4. Extend infra/scripts/configure-hblink-policy.sh to validate/render those keys. Keep its existing backup, live peer-policy preservation, restart and rollback guarantees.
+5. Extend production verification so the live config must have voice telemetry enabled while TG9990 remains absent from ordinary routed talkgroup lists.
+6. Remove the temporary hblink-website parrot-live-diagnostics workflow once the replacement deployment has passed.
+7. Update hblink-website HANDOVER.txt and checksums, pass Terraform/production safety checks, merge to main and allow normal Production CD to deploy.
+8. Never run both HBlink4 cores simultaneously where duplicate HomeBrew/OpenBridge sessions are possible; the production EIP attachment remains the traffic switch/authoritative colour.
 
-Upstream observations to track
+Post-deployment RF acceptance
+-----------------------------
+1. Make a local TG9990 test long enough to outlive the previous hang-time failure window and confirm the full echo completes without a false Test cancelled.
+2. Confirm the spoken report follows the echo and contains the measured Bit Error Rate, Received Signal Strength Indication, correct Timeslot and "Seventy threes."
+3. Confirm the dashboard progresses through Voice report, Test complete and then returns to Ready after about eight seconds.
+4. Confirm the actual originating TS1/TS2 is displayed throughout.
+5. Confirm a new RF transmission during the spoken report stops/yields the report without converting the completed echo into Test cancelled.
+6. Confirm TG9990 is still local-only and absent from all ordinary routing/bridge paths.
+
+Known follow-up technical debt
 ------------------------------
-- Dashboard release/version ownership is split between server.py and the composed admin_app entry point. Direct use of dashboard.server can therefore diverge from the deployed composed application's version. A single version source would avoid stale reporting.
-- Browser WebSocket ownership is embedded in dashboard.html rather than exposed through a shared event-dispatch module. Extension helpers can otherwise create duplicate WebSocket connections or silently diverge from the main dashboard feed.
-- Informational UI failures were previously silent: a failed secondary activity socket could leave a healthy-looking Ready state. A stale/disconnected activity indicator or shared client-side event bus would improve observability.
-- The original parrot dashboard regression test asserted source-code strings rather than exercising the event path, which was insufficient to catch the production symptom. Runtime/browser-level event-state testing would improve coverage.
-- hblink4/events.py uses non-blocking stream sockets with framed messages and `sendall`; an output buffer/async writer would be safer against partial/non-blocking sends and dashboard telemetry frame loss or corruption under backpressure.
-- The non-blocking TCP EventEmitter connect path should explicitly complete/check an in-progress connection before treating it as usable; the local Unix-socket production path does not depend on that TCP edge case.
-- Existing FastAPI `on_event` deprecation warnings remain technical debt; migrate startup/shutdown handling to lifespan when convenient.
-- None of these observations currently indicate a discovered DMR routing/parrot RF-core defect; the RF echo path remained functional during the dashboard failure.
-
-Authentication and administrator controls
------------------------------------------
-- /admin uses Cognito for named administrators and retains the configured local username/password hash as a reserved local break-glass path.
-- Cognito administrators must belong to HBlink4Admins.
-- Cognito access/challenge tokens remain server-side behind the existing HttpOnly/CSRF session layer.
-- Optional TOTP and WebAuthn/YubiKey/passkey management remain available to Cognito administrators.
-
-Outstanding roadmap
--------------------
-1. Verify delivered SGARS invitation/reset email headers and DKIM/DMARC alignment.
-2. Pursue approved external DMR trunking after the appropriate VK DMR contact path is established.
-3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
-4. Future option: make the dashboard installable as a PWA with conservative static-shell caching and no caching of authenticated/live status APIs.
-5. Future SGARS integration can consume `/api/local-services` through its existing Lambda proxy.
+- hblink4/events.py still uses a non-blocking stream socket with sendall; buffered/asynchronous event delivery would be more robust under backpressure, although this has not been demonstrated as a production fault.
+- FastAPI on_event startup/shutdown hooks are deprecated and should migrate to lifespan handling when convenient.
+- Dashboard version ownership remains split across composed modules and could be centralized later.
 
 Safety notes
 ------------
-- Never expose HomeBrew passphrases, full configuration backups, password hashes, Cognito tokens/credentials, WebAuthn private material or other secrets in logs/repository/public APIs.
-- Never run both blue and green HBlink4 cores simultaneously when duplicate HomeBrew/OpenBridge sessions are possible.
-- Treat the live EIP association as the authoritative production color.
-- Keep external network TGs and local service TGs explicitly isolated; the parrot must never become a transit/bridge path.
+- Never expose HomeBrew/OpenBridge passphrases, full configuration backups, password hashes, Cognito tokens/credentials, WebAuthn private material or other secrets in logs, repository content or public APIs.
+- Preserve Cognito as primary dashboard authentication and retain the local PBKDF2 administrator as the permanent break-glass path.
+- Keep external network TGs and local service TGs explicitly isolated; TG9990 must never become a transit/bridge path.
