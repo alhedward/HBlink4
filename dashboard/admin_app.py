@@ -19,7 +19,14 @@ from .cognito_auth import CognitoAuthError, CognitoPasswordError
 
 
 _identity_service_instance = None
-_ADMIN_ASSET_VERSION = "20260830-parrot-live-1"
+_DASHBOARD_VERSION = "1.3.0"
+_ADMIN_ASSET_VERSION = "20260830-parrot-live-2"
+
+# dashboard.admin_app is the deployed application entry point. Keep the
+# underlying public/admin API version and FastAPI metadata aligned with this
+# composed dashboard release without duplicating a stale version in the UI.
+server.DASHBOARD_VERSION = _DASHBOARD_VERSION
+server.app.version = _DASHBOARD_VERSION
 
 
 def _identity_service() -> CognitoAdminIdentityService:
