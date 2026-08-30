@@ -19,7 +19,7 @@ from .cognito_auth import CognitoAuthError, CognitoPasswordError
 
 
 _identity_service_instance = None
-_ADMIN_ASSET_VERSION = "20260830-local-services-1"
+_ADMIN_ASSET_VERSION = "20260830-parrot-live-1"
 
 
 def _identity_service() -> CognitoAdminIdentityService:
