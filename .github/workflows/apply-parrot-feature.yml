@@ -18,14 +18,15 @@ jobs:
         with:
           ref: feature/parrot-voice-telemetry-timeout-fix
 
-      - name: Apply dashboard integration
-        run: python scripts/apply_parrot_dashboard_patch.py
+      - name: Apply config and logging integration
+        run: python scripts/apply_parrot_config_patch.py
 
       - name: Commit integration
         run: |
           git diff --check
+          python -m json.tool config/config_sample.json >/dev/null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dashboard/parrot_activity_state.py dashboard/static/parrot_activity_poll.js dashboard/static/local_services.js tests/test_parrot_activity_recovery.py tests/test_parrot_activity_dashboard.py
-          git commit -m "Show parrot voice report and reset final activity"
+          git add hblink4/parrot.py config/config_sample.json
+          git commit -m "Document voice telemetry and surface parrot logs"
           git push
