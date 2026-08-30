@@ -1,9 +1,14 @@
 """Bundled AMBE+2 vocabulary for HBlink4 parrot voice telemetry.
 
 The source speech was generated offline with Australian-English gTTS and
-converted to 8 kHz, 16-bit signed little-endian mono PCM.  OpenDMR then encoded
-the PCM to canonical 9-byte DMR AMBE+2 frames.  Production HBlink4 never runs
+converted to 8 kHz, 16-bit signed little-endian mono PCM. OpenDMR then encoded
+the PCM to canonical 9-byte DMR AMBE+2 frames. Production HBlink4 never runs
 TTS or a vocoder; it only reads these pre-encoded frames.
+
+The pinned OpenDMR wrapper revision used a historical sequential 49-bit b[]
+parameter layout instead of its encoder's own encode_49bit() mapping. The
+archive is retained as the original build artifact, while this loader repairs
+that bit placement losslessly in memory before telemetry is transmitted.
 """
 
 from __future__ import annotations
@@ -13,7 +18,10 @@ import tarfile
 from pathlib import Path
 from typing import Any, Dict
 
-from .parrot_ambe import validate_canonical_frame
+from .parrot_ambe import (
+    repair_legacy_opendmr_parameter_packing,
+    validate_canonical_frame,
+)
 
 
 OPENDMR_COMMIT = "d28164b39ba4d91ad5948ff22707937f8944f70f"
@@ -83,13 +91,29 @@ def _load_assets() -> tuple[Dict[str, bytes], Dict[str, Any]]:
                 raise RuntimeError(f"parrot voice asset {name!r} byte count does not match manifest")
             if entry.get("frames") != len(payload) // 9:
                 raise RuntimeError(f"parrot voice asset {name!r} frame count does not match manifest")
+
+            corrected = bytearray()
             try:
                 for offset in range(0, len(payload), 9):
-                    validate_canonical_frame(payload[offset:offset + 9])
+                    frame = repair_legacy_opendmr_parameter_packing(
+                        payload[offset:offset + 9]
+                    )
+                    validate_canonical_frame(frame)
+                    corrected.extend(frame)
             except ValueError as exc:
-                raise RuntimeError(f"parrot voice asset {name!r} has invalid channel coding: {exc}") from exc
-            assets[name] = payload
+                raise RuntimeError(
+                    f"parrot voice asset {name!r} has invalid AMBE coding: {exc}"
+                ) from exc
+            assets[name] = bytes(corrected)
 
+    # Runtime metadata explicitly records the lossless migration applied above;
+    # the committed archive itself remains the original reproducible build asset.
+    manifest = dict(manifest)
+    manifest["voice_parameter_packing"] = {
+        "archive": "legacy-opendmr-sequential-b-fields",
+        "runtime": "op25-encode_49bit",
+        "migration": "lossless b[0..8] recovery and repack",
+    }
     return assets, manifest
 
 
