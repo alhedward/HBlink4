@@ -23,6 +23,11 @@ def test_bundled_parrot_voice_vocabulary_is_complete_and_frame_aligned():
     assert ASSET_MANIFEST["channel_coding"]["b_block"] == (
         "golay23-right-aligned-before-prng"
     )
+    assert ASSET_MANIFEST["voice_parameter_packing"] == {
+        "archive": "legacy-opendmr-sequential-b-fields",
+        "runtime": "op25-encode_49bit",
+        "migration": "lossless b[0..8] recovery and repack",
+    }
     for payload in AMBE_ASSETS.values():
         for offset in range(0, len(payload), 9):
             validate_canonical_frame(payload[offset:offset + 9])
