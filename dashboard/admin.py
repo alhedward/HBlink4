@@ -391,10 +391,86 @@ class TalkgroupConfigStore:
         self._atomic_replace(raw, rendered)
         return self.load_for_editor()
 
+    def _history_directory(self) -> Path:
+        directory = self.config_path.parent / ".hblink4-config-history"
+        try:
+            directory.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(directory, 0o700)
+        except OSError as exc:
+            raise TalkgroupConfigError(f"Could not prepare HBlink4 config history: {exc}") from exc
+        return directory
+
+    def _archive_prechange(self, raw: bytes) -> dict:
+        revision = _revision(raw)
+        timestamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        nanoseconds = time.time_ns() % 1_000_000_000
+        filename = (
+            f"{self.config_path.name}.prechange.{timestamp}{nanoseconds:09d}Z."
+            f"{revision[:12]}.json"
+        )
+        target = self._history_directory() / filename
+        self._atomic_write(target, raw, 0o600)
+        return {"revision": revision, "filename": filename}
+
+    def mark_current_known_good(self) -> dict:
+        raw, _config, revision, _section_key = self._read()
+        directory = self._history_directory()
+        recorded_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        payload_path = directory / f"{self.config_path.name}.last-known-good.json"
+        metadata_path = directory / f"{self.config_path.name}.last-known-good.meta.json"
+        metadata = {"revision": revision, "recorded_at": recorded_at}
+        self._atomic_write(payload_path, raw, 0o600)
+        self._atomic_write(
+            metadata_path,
+            (json.dumps(metadata, indent=2) + "\n").encode("utf-8"),
+            0o600,
+        )
+        return {"available": True, **metadata}
+
+    def last_known_good_status(self) -> dict:
+        directory = self.config_path.parent / ".hblink4-config-history"
+        payload_path = directory / f"{self.config_path.name}.last-known-good.json"
+        metadata_path = directory / f"{self.config_path.name}.last-known-good.meta.json"
+        if not payload_path.exists():
+            return {"available": False}
+        try:
+            raw = payload_path.read_bytes()
+            revision = _revision(raw)
+            recorded_at = None
+            if metadata_path.exists():
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if isinstance(metadata, dict):
+                    if metadata.get("revision") == revision:
+                        recorded_at = metadata.get("recorded_at")
+            result = {"available": True, "revision": revision}
+            if isinstance(recorded_at, str) and recorded_at:
+                result["recorded_at"] = recorded_at
+            return result
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TalkgroupConfigError(f"Could not read last-known-good HBlink4 config metadata: {exc}") from exc
+
+    def restore_last_known_good(self) -> dict:
+        payload_path = (
+            self.config_path.parent
+            / ".hblink4-config-history"
+            / f"{self.config_path.name}.last-known-good.json"
+        )
+        try:
+            raw = payload_path.read_bytes()
+        except FileNotFoundError as exc:
+            raise TalkgroupConfigError("No last-known-good HBlink4 config has been recorded yet") from exc
+        except OSError as exc:
+            raise TalkgroupConfigError(f"Could not read last-known-good HBlink4 config: {exc}") from exc
+        return self.restore_full_config(raw)
+
     def _atomic_replace(self, old_raw: bytes, new_raw: bytes) -> None:
         try:
             stat_result = self.config_path.stat()
             if self.backup_on_save:
+                # Archive the exact pre-change bytes under an immutable unique name
+                # before updating the compatibility .bak or the live config. A
+                # later bad edit therefore cannot erase the earlier rollback point.
+                self._archive_prechange(old_raw)
                 backup_path = self.config_path.with_suffix(self.config_path.suffix + ".bak")
                 self._atomic_write(backup_path, old_raw, stat_result.st_mode & 0o777)
             self._atomic_write(self.config_path, new_raw, stat_result.st_mode & 0o777)
