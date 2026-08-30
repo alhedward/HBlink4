@@ -1,4 +1,4 @@
-name: Apply parrot LC fix
+name: Build parrot voice assets
 
 on:
   push:
@@ -11,21 +11,59 @@ permissions:
   contents: write
 
 jobs:
-  patch:
+  build-assets:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/parrot-voice-telemetry-timeout-fix
 
-      - name: Align generated group-voice LC
-        run: python scripts/fix_parrot_voice_lc.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Commit LC fix
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg build-essential
+          python -m pip install --upgrade pip
+          python -m pip install gTTS num2words
+          python -m pip install -r requirements.txt -r requirements-dashboard.txt
+
+      - name: Build pinned OpenDMR encoder
+        run: |
+          git clone https://github.com/MW0MWZ/OpenDMR.git /tmp/OpenDMR
+          git -C /tmp/OpenDMR checkout d28164b39ba4d91ad5948ff22707937f8944f70f
+          make -C /tmp/OpenDMR -j"$(nproc)"
+          /tmp/OpenDMR/dmr_codec info
+
+      - name: Generate Australian-English AMBE vocabulary
+        run: |
+          python scripts/generate_parrot_voice_assets.py \
+            --codec /tmp/OpenDMR/dmr_codec \
+            --output hblink4/parrot_voice_assets.tar.gz
+          sha256sum hblink4/parrot_voice_assets.tar.gz
+
+      - name: Remove temporary implementation scaffolding
+        run: |
+          rm -rf scripts/.parrot_voice_transfer
+          rm -f \
+            scripts/apply_parrot_config_patch.py \
+            scripts/apply_parrot_dashboard_patch.py \
+            scripts/apply_parrot_feature_patch.py \
+            scripts/fix_parrot_voice_lc.py
+          rm -f .github/workflows/apply-parrot-feature.yml
+
+      - name: Run full HBlink4 regression
         run: |
           git diff --check
+          python -m pytest tests/ -v
+
+      - name: Commit generated assets and cleanup
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add hblink4/parrot_voice.py
-          git commit -m "Use canonical group voice LC for parrot telemetry"
+          git add -A
+          git commit -m "Bundle parrot voice telemetry assets"
           git push
