@@ -1555,6 +1555,21 @@ async def admin_restart_hblink(request: Request):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     logger.info("Dashboard admin %s restarted HBlink4 successfully", session.username)
+
+    # A downloaded backup protects against accidental overwrite, but it does not
+    # prove the configuration is healthy. Promote the exact current bytes to a
+    # separate last-known-good snapshot only after the fixed restart controller
+    # has verified that hblink4.service returned active.
+    try:
+        known_good = _talkgroup_store().mark_current_known_good()
+    except TalkgroupConfigError as exc:
+        logger.error(
+            "HBlink4 restarted successfully but last-known-good snapshot failed: %s", exc
+        )
+        result["known_good_recorded"] = False
+    else:
+        result["known_good_recorded"] = True
+        result["known_good_revision"] = known_good["revision"]
     return result
 
 
