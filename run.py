@@ -7,12 +7,8 @@ import os
 import sys
 from hblink4.hblink import HBProtocol, main
 from hblink4.parrot import install_parrot
-from hblink4.parrot_diag import install_fixed_parrot_voice_report
 
 
-# TEMPORARY RF diagnostic: force a known spoken report while retaining the
-# normal admin voice-telemetry On/Off switch and the production packet path.
-install_fixed_parrot_voice_report()
 install_parrot(HBProtocol)
 
 
