@@ -26,7 +26,7 @@ from .parrot_voice import (
     load_bundled_assets,
 )
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("hblink4.hblink.parrot")
 
 
 @dataclass(frozen=True)
