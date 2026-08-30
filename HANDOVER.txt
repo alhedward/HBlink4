@@ -6,90 +6,90 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current main baseline: d69763665480b18b93d67caffcfc375facaaa100
-Current feature branch: feature/admin-parrot-voice-toggle
-Dashboard semantic version on this feature: 1.3.3
+Current main baseline: 49ac4f2b4504493ea8790165bb635e8c572a2e4b
+Current diagnostic branch: diag/parrot-known-voice-report
+Dashboard semantic version: 1.3.3
 
 Production state
 ----------------
 - Deployment repository: https://github.com/alhedward/hblink-website.git.
-- Current deployment main is 45e976705bd39edd170a53d1d03f0862979bc731.
-- Production CD run 31 completed successfully and production green i-0818c2b22deb877c3 behind EIP 54.206.153.208 is running exact HBlink4 d69763665480b18b93d67caffcfc375facaaa100.
-- TG9990 parrot is enabled and local-only. Spoken voice telemetry is currently enabled in the live config with source ID 9990 and a 0.45 second post-echo pause.
-- Operator RF feedback after that deployment: the parrot echo still works, but the spoken telemetry audio is not materially better. Treat voice quality as unresolved; do not confuse it with parrot echo correctness.
-- Production runs HBlink4 natively in /opt/hblink4 under hardened systemd services, not Docker.
+- Production is running HBlink4 49ac4f2b4504493ea8790165bb635e8c572a2e4b on the green instance behind EIP 54.206.153.208.
+- TG9990 parrot echo is enabled, local-only and working.
+- Dashboard /admin includes the protected Parrot voice telemetry On/Off control and Apply & restart action.
+- Live parrot.voice_telemetry_enabled is operator-owned and preserved across normal deployments.
+- Spoken telemetry audio quality remains unresolved; the operator reports choppy/garbled speech and parts that can sound backwards.
+- Production runs HBlink4 natively in /opt/hblink4 under systemd, not Docker.
 - Live /opt/hblink4/app/config/config.json is operator-owned. Preserve it across upgrades and mutate only explicitly managed keys.
 
-Current feature: admin voice telemetry toggle
----------------------------------------------
-- Goal: make parrot.voice_telemetry_enabled manageable from /admin without a deployment.
-- dashboard/parrot_admin.py provides a narrow config projection/editor. It exposes and changes only parrot.voice_telemetry_enabled while preserving all other JSON values.
-- The editor reuses TalkgroupConfigStore atomic replacement and backup-on-save behavior, so config/config.json.bak contains the complete pre-change config.
-- Writes require the existing authenticated admin session, the existing pre-edit full-config backup gate, a matching config revision, and CSRF protection.
-- The control is available to both Cognito administrators and the permanent local PBKDF2 break-glass administrator.
-- dashboard/static/admin_parrot_voice.js injects a dedicated Parrot voice telemetry card with an On/Off switch and Apply & restart HBlink4 action.
-- Applying the switch changes the live config through the narrow endpoint and then calls the existing fixed-command /api/admin/restart path, which verifies hblink4.service returns active.
-- The parrot echo enable flag is independent and is not changed by this control.
-- Dashboard release/cache-buster on this feature is 1.3.3 / 20260830-parrot-admin-1.
+Current diagnostic: deterministic parrot voice report
+-----------------------------------------------------
+- Branch diag/parrot-known-voice-report adds hblink4/parrot_diag.py and a small run.py hook.
+- The diagnostic changes only telemetry token selection. It does not alter AMBE assets, DMR packet construction, colour code, slot handling, source/destination IDs, timing or the admin On/Off switch.
+- When voice telemetry is enabled, the fixed spoken report is:
+  "Bit Error Rate zero point four percent. Received Signal Strength Indication minus seventy-two dBm. Timeslot two. Seventy threes."
+- Expected token sequence:
+  bit_error_rate, number_0, point, number_4, percent,
+  received_signal_strength_indication, minus, number_72, dbm,
+  timeslot, number_2, seventy_threes.
+- This is temporary and must be removed immediately after the diagnostic RF capture is collected and analysed.
 
-TG9990 parrot behaviour already in main
-----------------------------------------
-- Long echoes no longer false-cancel when ordinary stream-state hang-time cleanup releases the originating slot. Missing StreamState means free/safe; cancellation requires an actual active/reused conflict or repeater disconnect.
-- The 120-second recording cap is unchanged.
-- Dashboard local-service state shows actual TS1/TS2 and returns terminal Complete/Cancelled state to Ready after about eight seconds.
-- Optional voice telemetry follows a successful echo, uses average BER/RSSI plus timeslot, and yields the slot if new RF starts during the report without converting the completed echo into Test cancelled.
+RF capture findings
+-------------------
+- Operator supplied hblink9990.pcap containing one clean TG9990 exchange.
+- Capture contained 170 inbound DMRD packets and 170 outbound replay packets plus normal keepalive traffic.
+- The recorded call was about 10.26 seconds, one stream, 168 voice bursts.
+- Parrot replay packets were byte-for-byte identical to the incoming DMRD packets, confirming the ordinary echo path does not modify AMBE payloads.
+- 504 captured 72-bit AMBE frames round-tripped through the HBLink/dmr_utils3 DMR deinterleave/reinterleave algorithm with zero mismatches.
+- Captured TS2 voice sequence/header layout matches the generated telemetry call shape, so the HomeBrew 60-ms burst wrapper is no longer the leading suspect.
 
-Voice assets and channel coding
--------------------------------
-- Production has no runtime gTTS, ffmpeg, OpenDMR, network TTS dependency or vocoder dependency.
-- hblink4/parrot_voice_assets.tar.gz contains 210 pre-encoded prompt assets.
-- OpenDMR source provenance remains pinned to d28164b39ba4d91ad5948ff22707937f8944f70f.
-- HBlink4 main d69763665480b18b93d67caffcfc375facaaa100 includes the AMBE channel-coding repair and validates canonical A24+B23+C25 voice frames before converting them to the DMR Golay/PRNG/interleave representation.
-- Corrected archive SHA-256: 0b853269e9fbc148120f409ebded62fde9d6766694d2726b27fbb90dedda95b4.
-- HBlink4 PR #16 canonical regression passed 172 tests before merge.
+OpenDMR findings
+----------------
+- Voice source assets were generated offline from Australian-English gTTS PCM using OpenDMR pinned at d28164b39ba4d91ad5948ff22707937f8944f70f.
+- OpenDMR opendmr.cpp serializes encoder b[0..8] parameters naively as contiguous fields with lengths 7,5,5,9,7,5,4,4,3.
+- The bundled OP25-derived MBE encoder's own encode_49bit() uses a different AMBE bit placement: high bits are placed in positions 0..34 and low-order bits are distributed through positions 35..48.
+- This mismatch can yield structurally valid Golay/FEC and DMR interleave while scrambling the actual 49 AMBE voice parameter bits. It is the leading root-cause candidate for the garbled/backwards-sounding telemetry.
+- Earlier OpenDMR B-block Golay alignment defect was already repaired in HBlink4; that repair alone did not restore intelligible RF speech.
+- Do not regenerate TTS unless necessary. The current working hypothesis is that existing AMBE frames can be losslessly decoded back to the original nine b[] parameter values using the wrapper's wrong sequential layout, then repacked with encode_49bit() and rebuilt with correct FEC.
 
-Production verification note
-----------------------------
-- hblink-website post-deploy diagnostics run 33307157979 reported failure, but its captured output verified all critical live facts before failing: exact HBlink4 d697636..., all three services active, TG9990 enabled/local-only, voice telemetry enabled/source 9990/pause 0.45, and the corrected archive hash exactly matched.
-- The failure occurred immediately after the archive-hash check at the diagnostic workflow's additional source-marker grep, so it is a verifier-maintenance issue rather than evidence that the deployed revision/config/hash failed.
-- The temporary diagnostics workflow should be corrected or removed as part of the next deployment cleanup.
+Admin voice telemetry control
+-----------------------------
+- dashboard/parrot_admin.py exposes and changes only parrot.voice_telemetry_enabled.
+- Writes require authenticated admin session, CSRF, the existing full-config backup gate and a matching config revision.
+- Config replacement is atomic and keeps a complete pre-change .bak.
+- Apply calls the existing fixed-command restart path and verifies hblink4.service becomes active.
+- Cognito administrators and the local PBKDF2 break-glass administrator can use the control.
+- Echo enablement is independent; disabling spoken telemetry leaves TG9990 echo working.
 
-Regression requirements for this feature
-----------------------------------------
-1. Pure store tests must prove only voice_telemetry_enabled changes and the complete previous config is backed up.
-2. Stale revision and non-Boolean writes must fail closed.
-3. Middleware tests must prove the backup gate and CSRF are enforced and the local break-glass session can use the control.
-4. The admin page must inject the cache-busted parrot voice control script.
-5. Run the complete Python 3.12 regression suite through the normal pull-request workflow before merge.
-
-Deployment requirements
+TG9990 parrot behaviour
 -----------------------
-1. Merge the HBlink4 feature only after normal PR regression succeeds.
-2. In hblink-website, create a fresh deployment branch from current main and pin the exact merged HBlink4 SHA.
-3. Do not use deployment as the long-term voice telemetry switch. Keep the bootstrap/managed parrot policy compatible, but day-to-day On/Off control is the authenticated live admin setting.
-4. Preserve live default slot1_talkgroups, slot2_talkgroups, default_unit_calls, passphrases, peer patterns and upstream links.
-5. Deploy only through hblink-website main and successful production CI/CD; never run duplicate HBlink4 cores where duplicate HomeBrew/OpenBridge sessions are possible.
-6. Verify /admin shows the voice toggle, the current live state loads correctly after the safety backup, and Apply & restart changes only parrot.voice_telemetry_enabled.
-7. Remove the temporary parrot-live-diagnostics workflow after production verification and refresh both handovers/checksums.
+- Local group-call service only; never routed to external DMR networks or ordinary repeater fan-out.
+- 2 second playback delay, 60 ms packet cadence and 120 second recording cap.
+- Long echoes no longer false-cancel when normal stream-state hang-time cleanup releases the originating slot.
+- Dashboard activity shows actual TS1/TS2 and returns terminal state to Ready.
+- Voice telemetry follows only a successful echo and yields to new RF without turning the completed echo into Test cancelled.
 
-Post-deployment acceptance
---------------------------
-1. Log into /admin and download/confirm the required full config backup.
-2. Confirm the Parrot voice telemetry card reflects the current live setting.
-3. Toggle voice telemetry OFF, apply/restart, and confirm TG9990 echo still works with no spoken report.
-4. Toggle voice telemetry ON, apply/restart, and confirm the spoken report returns without any deployment.
-5. Confirm TG9990 remains absent from ordinary routed talkgroup lists and all operator-maintained routing policy is unchanged.
-6. Continue treating spoken audio intelligibility/quality as a separate follow-up problem.
+Voice assets/channel coding
+---------------------------
+- Production has no runtime gTTS, ffmpeg, OpenDMR or vocoder dependency.
+- hblink4/parrot_voice_assets.tar.gz contains 210 pre-encoded prompt assets.
+- Corrected archive SHA-256 currently deployed: 0b853269e9fbc148120f409ebded62fde9d6766694d2726b27fbb90dedda95b4.
+- parrot_ambe.py converts canonical 49-bit voice data to the established dmr_utils3/DSD 72-bit DMR interleave and validates channel coding.
+- The real-radio capture confirms that DMR interleave/deinterleave implementation against 504 live frames.
 
-Known follow-up technical debt
+Diagnostic acceptance sequence
 ------------------------------
-- Spoken telemetry audio quality remains below the operator's target despite the channel-coding repair; investigate prompt/vocoder quality separately from this admin-control feature.
-- hblink4/events.py still uses a non-blocking stream socket with sendall; buffered/asynchronous event delivery would be more robust under backpressure.
-- FastAPI on_event startup/shutdown hooks are deprecated and should migrate to lifespan handling when convenient.
-- Dashboard version ownership remains split across composed modules and could be centralized later.
+1. Run full Python 3.12 regression on the diagnostic PR.
+2. Merge only after the normal HBlink4 regression gate is green.
+3. Pin the exact merged HBlink4 SHA in hblink-website on a fresh deployment branch.
+4. Keep live operator routing/config and the current admin-selected voice On/Off preference intact.
+5. Deploy only through hblink-website main and successful production CI/CD.
+6. Operator enables voice telemetry in /admin, captures one TG9990 call through the complete fixed report, then disables telemetry again if desired.
+7. Analyse the capture by separating incoming radio, byte-identical echo and generated diagnostic telemetry streams.
+8. Remove hblink4/parrot_diag.py and the run.py hook after capture, then proceed with the actual AMBE parameter-packing repair.
 
 Safety notes
 ------------
-- Never expose HomeBrew/OpenBridge passphrases, complete configuration backups, password hashes, Cognito tokens/credentials, WebAuthn private material or other secrets in logs, repository content or public APIs.
-- Preserve Cognito as primary dashboard authentication and retain the local PBKDF2 administrator as the permanent break-glass path.
-- Keep external network TGs and local service TGs explicitly isolated; TG9990 must never become a transit/bridge path.
+- Never expose HomeBrew/OpenBridge passphrases, full config backups, password hashes, Cognito tokens/credentials or other secrets.
+- Never run duplicate HBlink4 cores where duplicate HomeBrew/OpenBridge sessions are possible.
+- Preserve Cognito primary authentication and the local PBKDF2 break-glass path.
+- TG9990 must remain absent from ordinary routed talkgroup lists.
