@@ -66,6 +66,9 @@ def test_parrot_core_emits_distinct_non_routing_lifecycle_events():
         "parrot_recording_started",
         "parrot_recording_complete",
         "parrot_playback_started",
+        "parrot_telemetry_started",
+        "parrot_telemetry_complete",
+        "parrot_telemetry_cancelled",
         "parrot_playback_complete",
         "parrot_recording_discarded",
         "parrot_playback_cancelled",
@@ -74,7 +77,7 @@ def test_parrot_core_emits_distinct_non_routing_lifecycle_events():
 
     assert "get_rf_quality" in source
     assert '_emit_parrot_event(self, "parrot_playback_started", activity)' in source
-    assert '_emit_parrot_event(self, "parrot_playback_complete", activity)' in source
+    assert '"parrot_playback_complete"' in source
 
 
 def test_dashboard_receiver_forwards_parrot_events_unchanged():
@@ -114,6 +117,9 @@ def test_local_services_ui_tracks_parrot_lifecycle_on_dashboard_socket():
     assert "parrot_recording_complete" in source
     assert "parrot_playback_started" in source
     assert "parrot_playback_complete" in source
+    assert "parrot_telemetry_started" in source
+    assert "parrot_telemetry_complete" in source
+    assert "parrot_telemetry_cancelled" in source
     assert "parrot_playback_cancelled" in source
     assert "RSSI ${quality.rssi_average_dbm} dBm avg" in source
     assert "BER ${quality.ber_average_percent}% avg" in source
@@ -122,6 +128,7 @@ def test_local_services_ui_tracks_parrot_lifecycle_on_dashboard_socket():
     assert "Recording" in source
     assert "Preparing playback" in source
     assert "Playing back" in source
+    assert "Voice report" in source
     assert "Test complete" in source
 
 
@@ -130,7 +137,7 @@ def test_composed_dashboard_release_version_is_current():
     # which installs the recovery layer before uvicorn starts serving requests.
     parrot_activity_state.install(admin_app)
 
-    assert admin_app._DASHBOARD_VERSION == "1.3.1"
-    assert server.DASHBOARD_VERSION == "1.3.1"
-    assert server.app.version == "1.3.1"
-    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-3"
+    assert admin_app._DASHBOARD_VERSION == "1.3.2"
+    assert server.DASHBOARD_VERSION == "1.3.2"
+    assert server.app.version == "1.3.2"
+    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-4"

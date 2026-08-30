@@ -19,6 +19,9 @@ _PHASES = {
     "parrot_recording_started": "recording",
     "parrot_recording_complete": "preparing",
     "parrot_playback_started": "playback",
+    "parrot_telemetry_started": "telemetry",
+    "parrot_telemetry_complete": "telemetry",
+    "parrot_telemetry_cancelled": "telemetry",
     "parrot_playback_complete": "complete",
     "parrot_recording_discarded": "cancelled",
     "parrot_playback_cancelled": "cancelled",
@@ -59,6 +62,7 @@ def _safe_activity_data(data: Dict[str, Any]) -> Dict[str, Any]:
         "reason",
         "connection_type",
         "is_assumed",
+        "voice_telemetry_status",
     ):
         if key in data:
             result[key] = data[key]
@@ -214,8 +218,8 @@ def install(admin_app_module):
     global _installed
 
     server = admin_app_module.server
-    asset_version = "20260830-parrot-live-3"
-    dashboard_version = "1.3.1"
+    asset_version = "20260830-parrot-live-4"
+    dashboard_version = "1.3.2"
 
     # Keep release/version reporting authoritative in the deployed composed app.
     admin_app_module._DASHBOARD_VERSION = dashboard_version
