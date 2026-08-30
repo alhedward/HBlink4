@@ -18,7 +18,7 @@ from typing import List, Sequence, Tuple
 AMBE_FRAME_BYTES = 9
 
 # OpenDMR opendmr.cpp historically serialized b[0..8] contiguously instead of
-# using the encoder's own encode_49bit() mapping.  All bundled HBlink4 voice
+# using the encoder's own encode_49bit() mapping. All bundled HBlink4 voice
 # assets were produced by that pinned wrapper revision, so their nine encoder
 # parameters can be recovered losslessly from this legacy layout.
 _LEGACY_PARAMETER_WIDTHS = (7, 5, 5, 9, 7, 5, 4, 4, 3)
@@ -35,7 +35,7 @@ _INTERLEAVE_X = (
     11, 9, 10, 8, 9, 7, 8, 6, 7, 5, 6, 4,
 )
 _INTERLEAVE_Y = (
-    0, 2, 0, 2, 0, 2, 0, 3, 0, 3, 1, 3,
+    0, 2, 0, 2, 0, 2, 0, 2, 0, 3, 0, 3,
     1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3,
     1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3,
 )
@@ -196,10 +196,10 @@ def repair_legacy_opendmr_parameter_packing(frame: bytes) -> bytes:
     """Losslessly repair OpenDMR wrapper's historical 49-bit packing defect.
 
     Pinned OpenDMR ``opendmr.cpp`` wrote the nine encoder b[] values as simple
-    contiguous fields.  Its own OP25-derived ``MBEEncoder::encode_49bit()``
-    deliberately scatters several low-order bits into positions 35..48.  The
+    contiguous fields. Its own OP25-derived ``MBEEncoder::encode_49bit()``
+    deliberately scatters several low-order bits into positions 35..48. The
     wrapper therefore produced valid Golay/FEC around voice bits with the wrong
-    semantic placement.  Recover the original b[] values from that sequential
+    semantic placement. Recover the original b[] values from that sequential
     representation, apply the encoder's canonical mapping, and rebuild FEC.
     """
 
