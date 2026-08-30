@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from dashboard import admin_app, server
+from dashboard import admin_app, parrot_activity_state, server
 from hblink4.parrot import (
     ParrotRecording,
     ParrotSettings,
@@ -126,7 +126,11 @@ def test_local_services_ui_tracks_parrot_lifecycle_on_dashboard_socket():
 
 
 def test_composed_dashboard_release_version_is_current():
-    assert admin_app._DASHBOARD_VERSION == "1.3.0"
-    assert server.DASHBOARD_VERSION == "1.3.0"
-    assert server.app.version == "1.3.0"
-    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-2"
+    # Production starts the composed application through run_dashboard.py,
+    # which installs the recovery layer before uvicorn starts serving requests.
+    parrot_activity_state.install(admin_app)
+
+    assert admin_app._DASHBOARD_VERSION == "1.3.1"
+    assert server.DASHBOARD_VERSION == "1.3.1"
+    assert server.app.version == "1.3.1"
+    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-3"
