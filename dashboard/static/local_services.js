@@ -5,6 +5,7 @@
     let parrot = null;
     let activity = null;
     let serviceSocket = null;
+    let sharedSocket = null;
     let reconnectTimer = null;
     let badgeResetTimer = null;
     const repeaters = new Map();
@@ -132,6 +133,18 @@
         editor.insertBefore(card, editor.firstChild);
     }
 
+    function normaliseActivityData(data) {
+        if (!data || typeof data !== 'object') return {};
+        const normalised = { ...data };
+        if (!Number.isInteger(normalised.src_id) && Number.isInteger(normalised.rf_src)) {
+            normalised.src_id = normalised.rf_src;
+        }
+        if (!Number.isInteger(normalised.packet_count) && Number.isInteger(normalised.packets)) {
+            normalised.packet_count = normalised.packets;
+        }
+        return normalised;
+    }
+
     function updateActivityElements(prefix) {
         const status = document.getElementById(`${SERVICE_ID}${prefix}Status`);
         const who = document.getElementById(`${SERVICE_ID}${prefix}Who`);
@@ -178,7 +191,7 @@
             clearTimeout(badgeResetTimer);
             badgeResetTimer = null;
         }
-        activity = { ...(activity || {}), ...data, phase };
+        activity = { ...(activity || {}), ...normaliseActivityData(data), phase };
         renderActivity();
 
         if (phase === 'complete' || phase === 'cancelled') {
@@ -236,7 +249,11 @@
         case 'stream_update':
             if (activity && activity.phase === 'recording' &&
                 data.dst_id === parrot.talkgroup && matchesCurrent(data)) {
-                activity = { ...activity, ...data, phase: 'recording' };
+                activity = {
+                    ...activity,
+                    ...normaliseActivityData(data),
+                    phase: 'recording'
+                };
                 renderActivity();
             }
             break;
@@ -267,21 +284,58 @@
         }
     }
 
+    function handleSocketMessage(message) {
+        if (!message || message.data === 'pong') return;
+        try {
+            handleDashboardEvent(JSON.parse(message.data));
+        } catch (_) {
+            // Ignore malformed informational events; the main dashboard remains independent.
+        }
+    }
+
+    function scheduleReconnect() {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectActivitySocket, 3000);
+    }
+
+    function sharedSocketClosed() {
+        if (sharedSocket) {
+            sharedSocket.removeEventListener('message', handleSocketMessage);
+            sharedSocket.removeEventListener('close', sharedSocketClosed);
+        }
+        sharedSocket = null;
+        scheduleReconnect();
+    }
+
+    function attachSharedDashboardSocket() {
+        try {
+            // dashboard.html already owns a proven /ws connection. Reuse it so
+            // Local DMR Services cannot silently diverge behind a second socket.
+            if (typeof ws === 'undefined' || !(ws instanceof WebSocket)) return false;
+            if (sharedSocket === ws) return true;
+            if (sharedSocket) {
+                sharedSocket.removeEventListener('message', handleSocketMessage);
+                sharedSocket.removeEventListener('close', sharedSocketClosed);
+            }
+            sharedSocket = ws;
+            sharedSocket.addEventListener('message', handleSocketMessage);
+            sharedSocket.addEventListener('close', sharedSocketClosed);
+            return true;
+        } catch (_) {
+            sharedSocket = null;
+            return false;
+        }
+    }
+
     function connectActivitySocket() {
+        if (attachSharedDashboardSocket()) return;
         if (serviceSocket && (serviceSocket.readyState === WebSocket.OPEN || serviceSocket.readyState === WebSocket.CONNECTING)) return;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         serviceSocket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-        serviceSocket.onmessage = message => {
-            try {
-                handleDashboardEvent(JSON.parse(message.data));
-            } catch (_) {
-                // Ignore malformed informational events; the main dashboard remains independent.
-            }
-        };
+        serviceSocket.onmessage = handleSocketMessage;
         serviceSocket.onclose = () => {
             serviceSocket = null;
-            if (reconnectTimer) clearTimeout(reconnectTimer);
-            reconnectTimer = setTimeout(connectActivitySocket, 3000);
+            scheduleReconnect();
         };
         serviceSocket.onerror = () => {
             try { serviceSocket.close(); } catch (_) {}

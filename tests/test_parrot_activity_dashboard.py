@@ -1,6 +1,8 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from dashboard import admin_app, server
 from hblink4.parrot import (
     ParrotRecording,
     ParrotSettings,
@@ -75,10 +77,38 @@ def test_parrot_core_emits_distinct_non_routing_lifecycle_events():
     assert '_emit_parrot_event(self, "parrot_playback_complete", activity)' in source
 
 
-def test_local_services_ui_tracks_parrot_lifecycle_and_live_rf_quality():
+def test_dashboard_receiver_forwards_parrot_events_unchanged():
+    receiver = server.EventReceiver()
+    observed = []
+
+    async def capture(event):
+        observed.append(event)
+
+    receiver.send_to_clients = capture
+    event = {
+        "type": "parrot_playback_started",
+        "timestamp": 1234.5,
+        "data": {
+            "repeater_id": 5050001,
+            "slot": 2,
+            "src_id": 5051234,
+            "talkgroup": 9990,
+            "stream_id": "12345678",
+        },
+    }
+
+    asyncio.run(receiver.handle_event(event))
+
+    assert observed == [event]
+
+
+def test_local_services_ui_tracks_parrot_lifecycle_on_dashboard_socket():
     source = (ROOT / "dashboard" / "static" / "local_services.js").read_text()
 
-    assert "new WebSocket" in source
+    assert "attachSharedDashboardSocket" in source
+    assert "sharedSocket.addEventListener('message', handleSocketMessage)" in source
+    assert "new WebSocket" in source  # admin-page fallback
+    assert "normaliseActivityData" in source
     assert "stream_update" in source
     assert "parrot_recording_started" in source
     assert "parrot_recording_complete" in source
@@ -87,8 +117,16 @@ def test_local_services_ui_tracks_parrot_lifecycle_and_live_rf_quality():
     assert "parrot_playback_cancelled" in source
     assert "RSSI ${quality.rssi_average_dbm} dBm avg" in source
     assert "BER ${quality.ber_average_percent}% avg" in source
+    assert "`TS${activity.slot}`" in source
     assert "intentionally not in the routed talkgroup lists" in source
     assert "Recording" in source
     assert "Preparing playback" in source
     assert "Playing back" in source
     assert "Test complete" in source
+
+
+def test_composed_dashboard_release_version_is_current():
+    assert admin_app._DASHBOARD_VERSION == "1.3.0"
+    assert server.DASHBOARD_VERSION == "1.3.0"
+    assert server.app.version == "1.3.0"
+    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-2"
