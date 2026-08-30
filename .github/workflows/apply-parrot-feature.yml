@@ -6,6 +6,7 @@ on:
       - feature/parrot-voice-telemetry-timeout-fix
     paths:
       - .github/workflows/apply-parrot-feature.yml
+      - tests/test_parrot_voice_dashboard_state.py
 
 permissions:
   contents: write
