@@ -15,12 +15,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import auth_app, security_app, server
 from .admin_identity import CognitoAdminIdentityService
-from .cognito_auth import CognitoAuthError, CognitoPasswordError
+from .admin import StaleConfigError, TalkgroupConfigError
+from .cognito_auth import CognitoAuthError, CognitoChallengeError, CognitoPasswordError
+from .parrot_admin import ParrotVoiceTelemetryStore
 
 
 _identity_service_instance = None
-_DASHBOARD_VERSION = "1.3.0"
-_ADMIN_ASSET_VERSION = "20260830-parrot-live-2"
+_DASHBOARD_VERSION = "1.3.3"
+_ADMIN_ASSET_VERSION = "20260830-parrot-admin-1"
 
 # dashboard.admin_app is the deployed application entry point. Keep the
 # underlying public/admin API version and FastAPI metadata aligned with this
@@ -58,6 +60,7 @@ def _public_local_services() -> list[dict]:
                     "name": "Parrot / Echo Test",
                     "talkgroup": talkgroup,
                     "scope": "local-only",
+                    "voice_telemetry_enabled": parrot.get("voice_telemetry_enabled") is True,
                     "description": (
                         "Records a local group call and plays it back only to the "
                         "originating repeater or hotspot. It is not routed to other "
@@ -102,6 +105,7 @@ class AdminIdentityMiddleware:
             f'\n<script src="/static/admin_invite_feedback.js?v={version}"></script>'
             f'\n<script src="/static/admin_identity.js?v={version}"></script>'
             f'\n<script src="/static/admin_profile_compact.js?v={version}"></script>'
+            f'\n<script src="/static/admin_parrot.js?v={version}"></script>'
             f'\n<script src="/static/local_services.js?v={version}"></script>\n'
         )
         html = html.replace("</body>", scripts + "</body>")
@@ -119,6 +123,52 @@ class AdminIdentityMiddleware:
         if require_csrf:
             auth_app._require_csrf_scope(scope, session)
         return session, access_token
+
+    async def _parrot_voice_telemetry(self, scope, receive, send, update=False):
+        session = auth_app._session_from_scope(scope)
+        if session is None:
+            await self._send(JSONResponse({"detail": "Administrator login required"}, status_code=401), scope, receive, send)
+            return
+
+        store = ParrotVoiceTelemetryStore(server._talkgroup_store())
+        try:
+            if update:
+                try:
+                    auth_app._require_csrf_scope(scope, session)
+                except CognitoChallengeError as exc:
+                    await self._send(JSONResponse({"detail": str(exc)}, status_code=403), scope, receive, send)
+                    return
+                if not session.config_backup_confirmed:
+                    await self._send(
+                        JSONResponse(
+                            {"detail": "Download the current HBlink4 config backup before changing voice telemetry"},
+                            status_code=428,
+                        ),
+                        scope, receive, send,
+                    )
+                    return
+                payload = await auth_app._read_json(receive)
+                if not isinstance(payload, dict):
+                    await self._send(JSONResponse({"detail": "Request body must be a JSON object"}, status_code=400), scope, receive, send)
+                    return
+                saved = await asyncio.to_thread(
+                    store.save,
+                    expected_revision=payload.get("revision"),
+                    enabled=payload.get("enabled"),
+                )
+                response = JSONResponse({"ok": True, "restart_required": True, "configuration": saved})
+                server.logger.warning(
+                    "Dashboard admin %s set parrot voice telemetry to %s",
+                    session.username,
+                    saved["voice_telemetry_enabled"],
+                )
+            else:
+                response = JSONResponse(await asyncio.to_thread(store.load))
+        except StaleConfigError as exc:
+            response = JSONResponse({"detail": str(exc)}, status_code=409)
+        except TalkgroupConfigError as exc:
+            response = JSONResponse({"detail": str(exc)}, status_code=400 if update else 500)
+        await self._send(response, scope, receive, send)
 
     async def _profile(self, scope, receive, send, update=False):
         try:
@@ -223,6 +273,14 @@ class AdminIdentityMiddleware:
         if method == "GET" and path == "/api/local-services":
             await self._send(JSONResponse({"services": _public_local_services()}), scope, receive, send)
             return
+
+        if path == "/api/admin/local-services/parrot/voice-telemetry":
+            if method == "GET":
+                await self._parrot_voice_telemetry(scope, receive, send, update=False)
+                return
+            if method == "PUT":
+                await self._parrot_voice_telemetry(scope, receive, send, update=True)
+                return
 
         if server._admin_auth_provider() != "cognito" or not server.admin_config.get("enabled", False):
             await self.app(scope, receive, send)
