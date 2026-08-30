@@ -1,15 +1,14 @@
 """Server-backed live activity state for local DMR services.
 
 This module gives the dashboard a second, independent observation path for the
-TG9990 parrot.  WebSocket delivery remains the primary real-time mechanism, but
+TG9990 parrot. WebSocket delivery remains the primary real-time mechanism, but
 we retain the most recent sanitized lifecycle event in memory and expose it via
-a small read-only API.  The browser can therefore recover from a missed or
+a small read-only API. The browser can therefore recover from a missed or
 transient WebSocket event without touching HBlink routing or packet data.
 """
 
 from __future__ import annotations
 
-import json
 from time import time
 from typing import Any, Dict, Optional
 
@@ -100,7 +99,7 @@ def _record(event: Dict[str, Any]) -> None:
 
     if phase is None and event_type in _STREAM_PHASES:
         # Ordinary stream events are a fallback for a missed parrot-specific
-        # lifecycle event.  Only RX streams from local HBP endpoints qualify;
+        # lifecycle event. Only RX streams from local HBP endpoints qualify;
         # assumed TX streams and external trunks must never masquerade as the
         # local echo service.
         connection_type = raw_data.get("connection_type") or "repeater"
@@ -141,7 +140,7 @@ def get_activity(talkgroup: int) -> Optional[Dict[str, Any]]:
 
 
 class ParrotActivityScriptMiddleware:
-    """Inject the small polling fallback into HTML dashboard responses."""
+    """Inject the small polling fallback into HTML dashboard responses only."""
 
     def __init__(self, app, asset_version: str):
         self.app = app
@@ -156,15 +155,34 @@ class ParrotActivityScriptMiddleware:
 
         start_message = None
         body_parts = []
+        html_response = False
+        passthrough = False
 
         async def capture(message):
-            nonlocal start_message
+            nonlocal start_message, html_response, passthrough
+
             if message["type"] == "http.response.start":
-                start_message = message
+                headers = list(message.get("headers", []))
+                content_type = next(
+                    (
+                        value.decode("latin-1").lower()
+                        for key, value in headers
+                        if key.lower() == b"content-type"
+                    ),
+                    "",
+                )
+                html_response = "text/html" in content_type
+                if not html_response:
+                    passthrough = True
+                    await send(message)
+                else:
+                    start_message = message
                 return
-            if message["type"] != "http.response.body":
+
+            if passthrough or message["type"] != "http.response.body":
                 await send(message)
                 return
+
             body_parts.append(message.get("body", b""))
             if message.get("more_body", False):
                 return
@@ -174,16 +192,8 @@ class ParrotActivityScriptMiddleware:
                 return
 
             headers = list(start_message.get("headers", []))
-            content_type = next(
-                (
-                    value.decode("latin-1").lower()
-                    for key, value in headers
-                    if key.lower() == b"content-type"
-                ),
-                "",
-            )
             body = b"".join(body_parts)
-            if "text/html" in content_type and b"</body>" in body:
+            if b"</body>" in body:
                 body = body.replace(b"</body>", self.script + b"</body>", 1)
                 headers = [
                     (key, value)
