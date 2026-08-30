@@ -3,6 +3,7 @@ from dmr_utils3.const import EMB, SLOT_TYPE
 from hblink4.lc import decode_lc_from_vhead
 from hblink4.parrot_voice import (
     _emb_bits,
+    _interleave_ambe_frame,
     _slot_type_bits,
     assemble_ambe_frames,
     build_telemetry_packets,
@@ -25,6 +26,16 @@ def test_cc1_fec_generation_matches_dmr_utils_reference_constants():
     assert _emb_bits(1, 3) == EMB["BURST_D"]
     assert _emb_bits(1, 2) == EMB["BURST_E"]
     assert _emb_bits(1, 0) == EMB["BURST_F"]
+
+
+def test_opendmr_canonical_silence_interleaves_to_dmr_reference_frame():
+    # dmr_utils3.ambe_utils documents ACAA40200044408080 as the standard
+    # on-air AMBE silence frame. Deinterleaving it yields this canonical
+    # A+B+C2+C3 frame, which is the representation emitted by OpenDMR.
+    canonical = bytes.fromhex("49400f09a0e0000000")
+    assert _interleave_ambe_frame(canonical) == bytes.fromhex(
+        "acaa40200044408080"
+    )
 
 
 def test_telemetry_tokens_use_full_metric_names_natural_numbers_and_73s():
