@@ -6,15 +6,15 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current feature work: fix/parrot-dashboard-visibility
+Current feature work: feature/parrot-live-dashboard
 Dashboard semantic version: 1.2.0
 
 Known-good production baseline
 ------------------------------
-- main is 94731c8d86e3f2faea0b9e2fc6a95ca5aa82d1d5 (PR #8, local TG9990 parrot service).
-- PR #8 passed the complete Python 3.12 regression suite with 141 tests before merge.
-- hblink-website production pins that revision and Production CD completed successfully on 2026-08-30.
+- main is 72535cd91f19371752f66c45154088310656d491 (PR #9, TG9990 dashboard visibility).
+- hblink-website production pins that revision and Production CD run 33282843732 completed successfully on 2026-08-30.
 - Production is green on i-0818c2b22deb877c3 with EIP 54.206.153.208.
+- The production parrot has been RF-tested successfully: TG9990 records and echoes a completed local call back to the originating endpoint.
 - Dashboard authentication is Cognito, with the exact configured local PBKDF2 account retained as the permanent break-glass path.
 - Cognito MFA remains OPTIONAL with TOTP enabled and WebAuthn RP dmr.vk2ale.com using MULTI_FACTOR_WITH_USER_VERIFICATION.
 - Administrator invitation feedback, compact completed profile and compact configured MFA/WebAuthn controls are deployed.
@@ -25,21 +25,31 @@ Parrot / echo service
 - hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence to the originating repeater/hotspot at the configured cadence after a proper voice terminator.
 - The parrot is configurable through a top-level `parrot` object. Production uses TG9990, a 2-second delay, 60-ms packet cadence and a 120-second recording cap.
 - When enabled, the configured parrot TG is accepted as a local service even when absent from normal repeater TG allow-lists.
-- The parrot TG receives an empty normal route cache: it is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
+- TG9990 is intentionally absent from ordinary routed TG lists. The parrot receives an empty normal route cache and is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
 - A numerically identical TG received from an external trunk does not invoke the local parrot.
 - Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
 - Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
 - Regression coverage for RF/core behaviour is in tests/test_parrot.py; operator documentation is docs/parrot.md.
 
-Dashboard visibility follow-up
-------------------------------
-- The original TG9990 rollout did not expose the local service in the dashboard UI, because TG9990 is intentionally absent from the ordinary routed talkgroup ACLs.
-- Branch fix/parrot-dashboard-visibility adds a public `/api/local-services` projection that reads only non-secret enabled local-service metadata from the live HBlink4 config.
-- The endpoint never returns repeater passphrases or the complete configuration.
-- dashboard/static/local_services.js renders an explicit public `Local DMR Services` entry for `TG9990 — Parrot / Echo Test` plus a compact header badge.
-- The same helper adds a `Local DMR services` card to the administrator view, explicitly marking TG9990 as local-only and excluded from ordinary repeater/external-network routing.
+Dashboard local-service visibility
+----------------------------------
+- `/api/local-services` projects only non-secret enabled local-service metadata from the live HBlink4 config; it never returns repeater passphrases or the complete configuration.
+- dashboard/static/local_services.js renders the public `Local DMR Services` entry for `TG9990 — Parrot / Echo Test` plus a compact header badge.
+- The administrator view has the same local-service card and explicitly states that TG9990 is excluded from ordinary repeater/external-network routing.
 - Public and administrator HTML inject the local-services helper with a cache-busted asset version and no-store HTML response.
-- Regression coverage is in tests/test_parrot_dashboard.py.
+- PR #9 deployed this static service visibility to production.
+
+Live parrot activity follow-up
+------------------------------
+- Branch feature/parrot-live-dashboard adds non-routing dashboard events for parrot recording/playback lifecycle without creating assumed/TX streams or affecting traffic statistics.
+- Lifecycle events are `parrot_recording_started`, `parrot_recording_complete`, `parrot_playback_started`, `parrot_playback_complete`, `parrot_recording_discarded`, and `parrot_playback_cancelled`.
+- Event payloads contain only operational metadata: source radio ID, originating repeater ID, slot, TG9990, stream ID, duration, packet count and the existing StreamState RF-quality summary when available.
+- RF-quality is reused from the existing HomeBrew BER/RSSI stream pipeline: average/peak BER and average/min/max RSSI. No DMR packet/audio content is exposed in dashboard events.
+- local_services.js opens an informational dashboard WebSocket and combines the lifecycle events with normal `stream_update` RF-quality data.
+- The TG9990 badge/card shows Ready, Recording, Preparing playback, Playing back, Complete or Cancelled, with radio/repeater/slot, duration, packets, BER and RSSI.
+- Normal stream_start/stream_end events are used as a fallback so recording indication still works if a parrot-specific informational event is missed.
+- This feature does not claim PCM RMS/clipping values: HBlink4's current Python parrot replays DMRD/AMBE frames and the verified server-side telemetry available here is BER/RSSI.
+- Focused regression coverage is in tests/test_parrot_activity_dashboard.py.
 
 Authentication and administrator controls
 -----------------------------------------
@@ -69,7 +79,7 @@ Outstanding roadmap
 2. Pursue approved external DMR trunking (VKDMR/OpenBridge discussion currently awaiting access to the VK DMR official contact channel).
 3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
 4. Future option: make the dashboard installable as a PWA with conservative static-shell caching and no caching of authenticated/live status APIs.
-5. Inspect the SGARS website repository read-only to document how it consumes HBlink dashboard/talkgroup data once that repository is available to the GitHub connector; do not modify it as part of this follow-up.
+5. SGARS website integration can later consume `/api/local-services` through its existing Lambda proxy; the SGARS archive was inspected read-only and is not modified by this HBlink4 work.
 
 Safety notes
 ------------

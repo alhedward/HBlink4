@@ -6,7 +6,7 @@ It deliberately never participates in normal HBlink4 fan-out or external trunk
 routing.
 
 HBlink4's core is kept unchanged by installing small method wrappers on
-``HBProtocol`` from ``run.py``.  That keeps the feature isolated and easy to
+``HBProtocol`` from ``run.py``. That keeps the feature isolated and easy to
 remove or upstream later while preserving the existing hot-path implementation.
 """
 
@@ -100,6 +100,62 @@ class ParrotRecording:
         return (self.repeater_id, self.slot, self.stream_id)
 
 
+def parrot_activity_payload(
+    settings: ParrotSettings,
+    recording: ParrotRecording,
+    stream: Any = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Build a small, JSON-safe dashboard payload for one parrot call.
+
+    This intentionally exposes only operational metadata already present in
+    normal dashboard stream events. It never exposes repeater credentials or
+    packet/audio contents.
+    """
+    payload: Dict[str, Any] = {
+        "repeater_id": int.from_bytes(recording.repeater_id, "big"),
+        "slot": recording.slot,
+        "src_id": int.from_bytes(recording.rf_src, "big"),
+        "talkgroup": settings.talkgroup,
+        "stream_id": recording.stream_id.hex(),
+        "packet_count": len(recording.packets),
+        "duration": round(max(0.0, time() - recording.started_at), 2),
+    }
+
+    if stream is not None:
+        packet_count = getattr(stream, "packet_count", None)
+        if isinstance(packet_count, int) and packet_count >= 0:
+            payload["packet_count"] = packet_count
+
+        start_time = getattr(stream, "start_time", None)
+        if isinstance(start_time, (int, float)):
+            end_time = getattr(stream, "end_time", None)
+            if not isinstance(end_time, (int, float)):
+                end_time = time()
+            payload["duration"] = round(max(0.0, end_time - start_time), 2)
+
+        quality_getter = getattr(stream, "get_rf_quality", None)
+        if callable(quality_getter):
+            quality = quality_getter()
+            if isinstance(quality, dict) and quality:
+                payload["rf_quality"] = quality
+
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _emit_parrot_event(protocol: Any, event_type: str, payload: Dict[str, Any]) -> None:
+    """Emit an informational parrot event when the dashboard emitter exists."""
+    emitter = getattr(protocol, "_events", None)
+    if emitter is None:
+        return
+    emit = getattr(emitter, "emit", None)
+    if callable(emit):
+        emit(event_type, payload)
+
+
 class ParrotService:
     """Record bounded local parrot streams and return completed recordings."""
 
@@ -186,7 +242,9 @@ class ParrotService:
         )
         return recording
 
-    def discard(self, repeater_id: bytes, slot: int, stream_id: bytes, reason: str) -> None:
+    def discard(
+        self, repeater_id: bytes, slot: int, stream_id: bytes, reason: str
+    ) -> Optional[ParrotRecording]:
         recording = self._recordings.pop((repeater_id, slot, stream_id), None)
         if recording is not None:
             LOGGER.info(
@@ -194,11 +252,16 @@ class ParrotService:
                 stream_id.hex(),
                 reason,
             )
+        return recording
 
-    def discard_repeater(self, repeater_id: bytes) -> None:
+    def discard_repeater(self, repeater_id: bytes) -> List[ParrotRecording]:
         keys = [key for key in self._recordings if key[0] == repeater_id]
+        discarded = []
         for key in keys:
-            self._recordings.pop(key, None)
+            recording = self._recordings.pop(key, None)
+            if recording is not None:
+                discarded.append(recording)
+        return discarded
 
     def playback_lock(self, repeater_id: bytes, slot: int) -> asyncio.Lock:
         key = (repeater_id, slot)
@@ -262,7 +325,7 @@ def install_parrot(protocol_cls) -> None:
             return set()
         return original_calculate_targets(self, source, slot, dst_id, stream_id, rf_src)
 
-    async def playback(self, recording: ParrotRecording) -> None:
+    async def playback(self, recording: ParrotRecording, activity: Dict[str, Any]) -> None:
         service: ParrotService = self._parrot_service
         await asyncio.sleep(service.settings.delay_seconds)
 
@@ -272,6 +335,11 @@ def install_parrot(protocol_cls) -> None:
                 LOGGER.info(
                     "[PARROT] playback cancelled; originating repeater disconnected stream=%s",
                     recording.stream_id.hex(),
+                )
+                _emit_parrot_event(
+                    self,
+                    "parrot_playback_cancelled",
+                    {**activity, "reason": "originating repeater disconnected"},
                 )
                 return
 
@@ -285,6 +353,11 @@ def install_parrot(protocol_cls) -> None:
                     "[PARROT] playback cancelled; originating slot was reused stream=%s",
                     recording.stream_id.hex(),
                 )
+                _emit_parrot_event(
+                    self,
+                    "parrot_playback_cancelled",
+                    {**activity, "reason": "originating slot was reused"},
+                )
                 return
 
             LOGGER.info(
@@ -294,6 +367,7 @@ def install_parrot(protocol_cls) -> None:
                 len(recording.packets),
                 recording.stream_id.hex(),
             )
+            _emit_parrot_event(self, "parrot_playback_started", activity)
 
             for index, packet in enumerate(recording.packets):
                 repeater = self._repeaters.get(recording.repeater_id)
@@ -302,6 +376,11 @@ def install_parrot(protocol_cls) -> None:
                         "[PARROT] playback stopped; repeater disconnected stream=%s",
                         recording.stream_id.hex(),
                     )
+                    _emit_parrot_event(
+                        self,
+                        "parrot_playback_cancelled",
+                        {**activity, "reason": "repeater disconnected during playback"},
+                    )
                     return
 
                 current = repeater.get_slot_stream(recording.slot)
@@ -309,6 +388,11 @@ def install_parrot(protocol_cls) -> None:
                     LOGGER.info(
                         "[PARROT] playback stopped; slot became active stream=%s",
                         recording.stream_id.hex(),
+                    )
+                    _emit_parrot_event(
+                        self,
+                        "parrot_playback_cancelled",
+                        {**activity, "reason": "slot became active during playback"},
                     )
                     return
 
@@ -322,9 +406,12 @@ def install_parrot(protocol_cls) -> None:
                 recording.slot,
                 recording.stream_id.hex(),
             )
+            _emit_parrot_event(self, "parrot_playback_complete", activity)
 
-    def schedule_playback(self, recording: ParrotRecording) -> None:
-        task = asyncio.create_task(playback(self, recording))
+    def schedule_playback(
+        self, recording: ParrotRecording, activity: Dict[str, Any]
+    ) -> None:
+        task = asyncio.create_task(playback(self, recording, activity))
         self._tasks.append(task)
 
         def cleanup(done_task) -> None:
@@ -367,8 +454,11 @@ def install_parrot(protocol_cls) -> None:
         ):
             return
 
+        service: ParrotService = self._parrot_service
+        recording_key = (repeater_id, slot, packet["stream_id"])
+        new_recording = recording_key not in service._recordings
         is_terminator = self._is_dmr_terminator(data, packet["frame_type"])
-        recording = self._parrot_service.capture(
+        recording = service.capture(
             repeater_id=repeater_id,
             slot=slot,
             rf_src=packet["rf_src"],
@@ -377,18 +467,51 @@ def install_parrot(protocol_cls) -> None:
             packet=data,
             is_terminator=is_terminator,
         )
+
+        active_recording = service._recordings.get(recording_key)
+        if new_recording and active_recording is not None:
+            _emit_parrot_event(
+                self,
+                "parrot_recording_started",
+                parrot_activity_payload(service.settings, active_recording, current),
+            )
+
         if recording is not None:
-            schedule_playback(self, recording)
+            activity = parrot_activity_payload(service.settings, recording, current)
+            _emit_parrot_event(self, "parrot_recording_complete", activity)
+            schedule_playback(self, recording, activity)
 
     def patched_end_stream(self, stream, repeater_id: bytes, slot: int, end_time, reason: str):
         result = original_end_stream(self, stream, repeater_id, slot, end_time, reason)
         if reason != "terminator" and is_local_parrot(self, repeater_id, slot, stream.dst_id):
-            self._parrot_service.discard(repeater_id, slot, stream.stream_id, reason)
+            recording = self._parrot_service.discard(
+                repeater_id, slot, stream.stream_id, reason
+            )
+            if recording is not None:
+                _emit_parrot_event(
+                    self,
+                    "parrot_recording_discarded",
+                    parrot_activity_payload(
+                        self._parrot_service.settings,
+                        recording,
+                        stream,
+                        reason=reason,
+                    ),
+                )
         return result
 
     def patched_remove_repeater(self, repeater_id: bytes, reason: str) -> None:
         if hasattr(self, "_parrot_service"):
-            self._parrot_service.discard_repeater(repeater_id)
+            for recording in self._parrot_service.discard_repeater(repeater_id):
+                _emit_parrot_event(
+                    self,
+                    "parrot_recording_discarded",
+                    parrot_activity_payload(
+                        self._parrot_service.settings,
+                        recording,
+                        reason=reason,
+                    ),
+                )
         return original_remove_repeater(self, repeater_id, reason)
 
     protocol_cls.__init__ = patched_init
