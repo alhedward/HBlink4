@@ -1,6 +1,7 @@
 from dmr_utils3.const import EMB, SLOT_TYPE
 
 from hblink4.lc import decode_lc_from_vhead
+from hblink4.parrot_ambe import repair_legacy_opendmr_frame, validate_canonical_frame
 from hblink4.parrot_voice import (
     _emb_bits,
     _interleave_ambe_frame,
@@ -28,14 +29,22 @@ def test_cc1_fec_generation_matches_dmr_utils_reference_constants():
     assert _emb_bits(1, 0) == EMB["BURST_F"]
 
 
-def test_opendmr_canonical_silence_interleaves_to_dmr_reference_frame():
-    # dmr_utils3.ambe_utils documents ACAA40200044408080 as the standard
-    # on-air AMBE silence frame. Deinterleaving it yields this canonical
-    # A+B+C2+C3 frame, which is the representation emitted by OpenDMR.
-    canonical = bytes.fromhex("49400f09a0e0000000")
+def test_opendmr_canonical_silence_converts_to_dmr_reference_frame():
+    # MMDVM-Host's DMR FEC fallback gives canonical A=F00292, B=0E0B20,
+    # C=0 for the standard silence voice parameters. dmr_utils3 documents
+    # ACAA40200044408080 as the corresponding DMR on-air AMBE frame.
+    canonical = bytes.fromhex("f002920e0b20000000")
+    validate_canonical_frame(canonical)
     assert _interleave_ambe_frame(canonical) == bytes.fromhex(
         "acaa40200044408080"
     )
+
+
+def test_legacy_opendmr_b_block_is_losslessly_repaired():
+    legacy = bytes.fromhex("1230acbe6856000000")
+    corrected = bytes.fromhex("1230acbe4168000000")
+    assert repair_legacy_opendmr_frame(legacy) == corrected
+    validate_canonical_frame(corrected)
 
 
 def test_telemetry_tokens_use_full_metric_names_natural_numbers_and_73s():
@@ -87,9 +96,11 @@ def test_generated_call_is_valid_homebrew_shape_and_preserves_cc_slot_and_lc():
         {"ber_average_percent": 0.4, "rssi_average_dbm": -72.0},
         2,
     )
-    # One canonical 72-bit AMBE frame per vocabulary item is enough to test
-    # framing; assemble_ambe_frames pads the final DMR burst with silence.
-    assets = {token: bytes([index & 0xFF]) * 9 for index, token in enumerate(set(tokens), 1)}
+    # Use a genuinely valid canonical AMBE frame for packet-shape testing.
+    # The converter now validates A/B Golay coding and deliberately rejects
+    # arbitrary nine-byte blobs that are not real canonical AMBE frames.
+    canonical_silence = bytes.fromhex("f002920e0b20000000")
+    assets = {token: canonical_silence for token in set(tokens)}
 
     emitted_tokens, packets = build_telemetry_packets(
         rf_quality={"ber_average_percent": 0.4, "rssi_average_dbm": -72.0},

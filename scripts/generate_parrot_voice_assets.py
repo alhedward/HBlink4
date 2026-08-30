@@ -22,6 +22,8 @@ from pathlib import Path
 from gtts import gTTS
 from num2words import num2words
 
+from hblink4.parrot_ambe import validate_canonical_frame
+
 SAMPLE_RATE = 8000
 FRAME_SAMPLES = 160
 AMBE_FRAME_BYTES = 9
@@ -105,6 +107,14 @@ def encode_asset(codec: Path, text: str, target: Path, work: Path) -> tuple[int,
     payload = target.read_bytes()
     if not payload or len(payload) % AMBE_FRAME_BYTES:
         raise RuntimeError(f"OpenDMR produced invalid AMBE data for {text!r}")
+    try:
+        for offset in range(0, len(payload), AMBE_FRAME_BYTES):
+            validate_canonical_frame(payload[offset:offset + AMBE_FRAME_BYTES])
+    except ValueError as exc:
+        raise RuntimeError(
+            "OpenDMR emitted invalid DMR B-block channel coding. The pinned "
+            "encoder requires encode23127(c1) >> 1 before applying the PRNG mask."
+        ) from exc
     frames = len(payload) // AMBE_FRAME_BYTES
     expected = len(samples) // FRAME_SAMPLES
     if frames != expected:
@@ -176,6 +186,11 @@ def main() -> int:
             "frame_bytes": AMBE_FRAME_BYTES,
             "frame_duration_ms": 20,
             "opendmr_commit": OPENDMR_COMMIT,
+            "channel_coding": {
+                "canonical_format": "A24+B23+C25",
+                "b_block": "golay23-right-aligned-before-prng",
+                "reference": "MMDVM-Host AMBEFEC.cpp: encode23127(datb) >> 1 before PRNG",
+            },
             "source_tts": {
                 "engine": "gTTS / Google Translate speech",
                 "gtts_version": importlib.metadata.version("gTTS"),

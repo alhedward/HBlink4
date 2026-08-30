@@ -13,6 +13,8 @@ import tarfile
 from pathlib import Path
 from typing import Any, Dict
 
+from .parrot_ambe import validate_canonical_frame
+
 
 OPENDMR_COMMIT = "d28164b39ba4d91ad5948ff22707937f8944f70f"
 _ARCHIVE = Path(__file__).with_name("parrot_voice_assets.tar.gz")
@@ -48,6 +50,9 @@ def _load_assets() -> tuple[Dict[str, bytes], Dict[str, Any]]:
             raise RuntimeError("bundled parrot voice archive has an unexpected frame size")
         if manifest.get("opendmr_commit") != OPENDMR_COMMIT:
             raise RuntimeError("bundled parrot voice archive was encoded with an unexpected OpenDMR revision")
+        channel_coding = manifest.get("channel_coding") or {}
+        if channel_coding.get("b_block") != "golay23-right-aligned-before-prng":
+            raise RuntimeError("bundled parrot voice archive has unverified B-block channel coding")
 
         metadata = manifest.get("assets")
         if not isinstance(metadata, dict):
@@ -78,6 +83,11 @@ def _load_assets() -> tuple[Dict[str, bytes], Dict[str, Any]]:
                 raise RuntimeError(f"parrot voice asset {name!r} byte count does not match manifest")
             if entry.get("frames") != len(payload) // 9:
                 raise RuntimeError(f"parrot voice asset {name!r} frame count does not match manifest")
+            try:
+                for offset in range(0, len(payload), 9):
+                    validate_canonical_frame(payload[offset:offset + 9])
+            except ValueError as exc:
+                raise RuntimeError(f"parrot voice asset {name!r} has invalid channel coding: {exc}") from exc
             assets[name] = payload
 
     return assets, manifest

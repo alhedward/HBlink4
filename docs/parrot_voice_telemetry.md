@@ -40,15 +40,19 @@ The encoder is pinned to OpenDMR commit:
 
 `d28164b39ba4d91ad5948ff22707937f8944f70f`
 
+That revision's encoder must be built with one DMR channel-coding correction: the result of `CGolay24128::encode23127(c1)` is 24-bit aligned, so it must be shifted right once before the 23-bit PRNG mask is applied. This matches MMDVM-Host's `AMBEFEC.cpp` (`encode23127(datb) >> 1`). The asset generator validates every encoded A/B block and fails closed if an uncorrected codec is used.
+
+The originally generated vocabulary was migrated losslessly: Golay redundancy uniquely reconstructed the dropped B-block bit in every frame, so the Australian-English speech/vocoder parameters were preserved without re-running TTS or the vocoder.
+
 A typical build environment needs gTTS, num2words, ffmpeg, a C/C++ build toolchain and the pinned OpenDMR source. None of those are production runtime dependencies.
 
 OpenDMR and its integrated codec sources have their own upstream licences and provenance. Regenerated assets should retain the pinned revision and source-generation metadata in the archive manifest, and any change to the encoder/toolchain should be reviewed separately.
 
 ## DMR framing
 
-OpenDMR emits canonical/DVSI 72-bit AMBE frames in A+B+C order. HomeBrew DMR voice payloads carry the channel-coded voice bits in the DMR interleaved order. `hblink4/parrot_voice.py` applies the standard 36-dibit DMR AMBE interleave schedule before placing three 20 ms AMBE frames into each 60 ms voice burst.
+OpenDMR emits canonical/DVSI 72-bit AMBE frames in A(24)+B(23)+C(25) order. Those serial codewords are not the same representation as the historical DMR/DSD interleave matrix. HBlink4 therefore decodes the clean canonical frame to its 49 protected voice-parameter bits and re-encodes those parameters with the established `dmr_utils3.ambe_utils` DMR Golay/whitening/interleave rules before placing three 20 ms frames into each 60 ms voice burst.
 
-Regression coverage includes the standard DMR silence reference: canonical `49400f09a0e0000000` must interleave to `acaa40200044408080`. The generated call also verifies Voice Header/Terminator Link Control, Colour Code, timeslot, HomeBrew packet shape and A-F voice sequencing.
+Regression coverage uses an independent standard-silence oracle: canonical `f002920e0b20000000` must convert to DMR on-air `acaa40200044408080`. A second vector proves lossless repair of the legacy OpenDMR B-block alignment. The generated call also verifies Voice Header/Terminator Link Control, Colour Code, timeslot, HomeBrew packet shape and A-F voice sequencing.
 
 ## Dashboard lifecycle
 
