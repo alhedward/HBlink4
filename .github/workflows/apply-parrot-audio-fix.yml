@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/apply_parrot_audio_channel_fix.py
       - scripts/repair_parrot_voice_assets.py
+      - tests/test_parrot_voice.py
       - .github/workflows/apply-parrot-audio-fix.yml
 
 permissions:
