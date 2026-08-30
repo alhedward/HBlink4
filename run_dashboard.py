@@ -7,6 +7,10 @@ Starts the FastAPI web dashboard server
 import sys
 import uvicorn
 
+from dashboard import admin_app
+from dashboard.parrot_activity_state import install as install_parrot_activity_state
+
+
 if __name__ == '__main__':
     # Default host and port
     host = '0.0.0.0'  # Listen on all interfaces
@@ -22,8 +26,13 @@ if __name__ == '__main__':
     print("Press CTRL+C to stop")
     print()
 
+    # Keep the normal WebSocket UI as the primary live path, while retaining a
+    # tiny server-side parrot activity snapshot that lets the Local DMR
+    # Services card recover from a missed browser event.
+    app = install_parrot_activity_state(admin_app)
+
     uvicorn.run(
-        "dashboard.admin_app:app",
+        app,
         host=host,
         port=port,
         log_level="info",
