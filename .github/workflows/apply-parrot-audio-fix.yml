@@ -6,6 +6,7 @@ on:
       - fix/parrot-voice-channel-coding
     paths:
       - scripts/apply_parrot_audio_channel_fix.py
+      - scripts/repair_parrot_voice_assets.py
       - .github/workflows/apply-parrot-audio-fix.yml
 
 permissions:
