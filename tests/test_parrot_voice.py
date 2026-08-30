@@ -1,7 +1,11 @@
 from dmr_utils3.const import EMB, SLOT_TYPE
 
 from hblink4.lc import decode_lc_from_vhead
-from hblink4.parrot_ambe import repair_legacy_opendmr_frame, validate_canonical_frame
+from hblink4.parrot_ambe import (
+    repair_legacy_opendmr_frame,
+    repair_legacy_opendmr_parameter_packing,
+    validate_canonical_frame,
+)
 from hblink4.parrot_voice import (
     _emb_bits,
     _interleave_ambe_frame,
@@ -45,6 +49,20 @@ def test_legacy_opendmr_b_block_is_losslessly_repaired():
     corrected = bytes.fromhex("1230acbe4168000000")
     assert repair_legacy_opendmr_frame(legacy) == corrected
     validate_canonical_frame(corrected)
+
+
+def test_production_capture_49bit_parameter_packing_is_losslessly_repaired():
+    # Exact AMBE frame captured from the deterministic TG9990 telemetry report.
+    # Sequential OpenDMR wrapper packing recovers b[] =
+    # [90, 0, 6, 87, 78, 8, 14, 13, 1]. The encoder's own encode_49bit()
+    # layout produces the corrected canonical and on-air frames below.
+    legacy = bytes.fromhex("b40930d10843ce4769")
+    corrected = bytes.fromhex("b0357c6213d29f05c5")
+    assert repair_legacy_opendmr_parameter_packing(legacy) == corrected
+    validate_canonical_frame(corrected)
+    assert _interleave_ambe_frame(corrected) == bytes.fromhex(
+        "d5ee220741b9680b2f"
+    )
 
 
 def test_telemetry_tokens_use_full_metric_names_natural_numbers_and_73s():
