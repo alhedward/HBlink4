@@ -21,7 +21,9 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from bitarray import bitarray
 from dmr_utils3 import bptc, golay, qr
-from dmr_utils3.const import BS_DATA_SYNC, BS_VOICE_SYNC, LC_OPT
+from dmr_utils3.const import BS_DATA_SYNC, BS_VOICE_SYNC
+
+from .lc import LC_OPT_GROUP_DEFAULT
 
 
 AMBE_FRAME_BYTES = 9
@@ -287,7 +289,7 @@ def build_dmr_voice_packets(
     if len(stream_id) != 4:
         raise ValueError("DMR stream ID must be four bytes")
 
-    lc = LC_OPT + dst_id + rf_src
+    lc = LC_OPT_GROUP_DEFAULT + dst_id + rf_src
     head_lc = bptc.encode_header_lc(lc)
     term_lc = bptc.encode_terminator_lc(lc)
     emb_lc = bptc.encode_emblc(lc)
