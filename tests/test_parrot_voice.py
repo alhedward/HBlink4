@@ -87,9 +87,11 @@ def test_generated_call_is_valid_homebrew_shape_and_preserves_cc_slot_and_lc():
         {"ber_average_percent": 0.4, "rssi_average_dbm": -72.0},
         2,
     )
-    # One canonical 72-bit AMBE frame per vocabulary item is enough to test
-    # framing; assemble_ambe_frames pads the final DMR burst with silence.
-    assets = {token: bytes([index & 0xFF]) * 9 for index, token in enumerate(set(tokens), 1)}
+    # Use a genuinely valid canonical AMBE frame for packet-shape testing.
+    # The converter now validates A/B Golay coding and deliberately rejects
+    # arbitrary nine-byte blobs that are not real canonical AMBE frames.
+    canonical_silence = bytes.fromhex("f002920e0b20000000")
+    assets = {token: canonical_silence for token in set(tokens)}
 
     emitted_tokens, packets = build_telemetry_packets(
         rf_quality={"ber_average_percent": 0.4, "rssi_average_dbm": -72.0},
