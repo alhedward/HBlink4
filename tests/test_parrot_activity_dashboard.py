@@ -137,7 +137,7 @@ def test_composed_dashboard_release_version_is_current():
     # which installs the recovery layer before uvicorn starts serving requests.
     parrot_activity_state.install(admin_app)
 
-    assert admin_app._DASHBOARD_VERSION == "1.3.2"
-    assert server.DASHBOARD_VERSION == "1.3.2"
-    assert server.app.version == "1.3.2"
-    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-live-4"
+    assert admin_app._DASHBOARD_VERSION == "1.3.3"
+    assert server.DASHBOARD_VERSION == "1.3.3"
+    assert server.app.version == "1.3.3"
+    assert admin_app._ADMIN_ASSET_VERSION == "20260830-parrot-admin-1"

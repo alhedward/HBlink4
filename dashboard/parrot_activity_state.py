@@ -218,8 +218,8 @@ def install(admin_app_module):
     global _installed
 
     server = admin_app_module.server
-    asset_version = "20260830-parrot-live-4"
-    dashboard_version = "1.3.2"
+    asset_version = "20260830-parrot-admin-1"
+    dashboard_version = "1.3.3"
 
     # Keep release/version reporting authoritative in the deployed composed app.
     admin_app_module._DASHBOARD_VERSION = dashboard_version

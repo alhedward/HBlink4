@@ -176,6 +176,6 @@ def test_polling_asset_reports_explicit_timeslot_and_release_bump():
     assert "`TS${data.slot}`" in polling
     assert "/api/local-services/activity" in polling
     assert "POLL_MS = 750" in polling
-    assert "dashboard_version = \"1.3.2\"" in state_source
-    assert "20260830-parrot-live-4" in state_source
+    assert "dashboard_version = \"1.3.3\"" in state_source
+    assert "20260830-parrot-admin-1" in state_source
     assert "install_parrot_activity_state(admin_app)" in launcher
