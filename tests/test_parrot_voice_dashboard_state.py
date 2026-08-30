@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import time
 
 from dashboard import parrot_activity_state as activity_state
 
@@ -11,10 +12,11 @@ def setup_function():
 
 
 def test_voice_report_has_its_own_dashboard_phase_and_safe_status():
+    now = time()
     activity_state._record(
         {
             "type": "parrot_telemetry_started",
-            "timestamp": 100.0,
+            "timestamp": now,
             "data": {
                 "talkgroup": 9990,
                 "slot": 2,
@@ -33,7 +35,7 @@ def test_voice_report_has_its_own_dashboard_phase_and_safe_status():
     activity_state._record(
         {
             "type": "parrot_playback_complete",
-            "timestamp": 101.0,
+            "timestamp": now + 0.1,
             "data": {
                 "talkgroup": 9990,
                 "slot": 2,
