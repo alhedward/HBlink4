@@ -68,6 +68,7 @@
         case 'recording': return '🟡 Recording';
         case 'preparing': return '🟠 Preparing playback';
         case 'playback': return '🔵 Playing back';
+        case 'telemetry': return '🟣 Voice report';
         case 'complete': return '✅ Test complete';
         case 'cancelled': return '⚠️ Test cancelled';
         default: return '🟢 Ready';
@@ -196,9 +197,9 @@
 
         if (phase === 'complete' || phase === 'cancelled') {
             badgeResetTimer = setTimeout(() => {
-                const badge = document.getElementById(`${SERVICE_ID}Badge`);
-                if (badge && parrot) badge.textContent = `🦜 Parrot TG${parrot.talkgroup}`;
-            }, 5000);
+                activity = null;
+                renderActivity();
+            }, 8000);
         }
     }
 
@@ -218,13 +219,14 @@
             rememberRepeaters(data.repeaters);
             rememberLastHeard(data.last_heard);
             if (parrot && Array.isArray(data.streams)) {
-                const active = data.streams.find(stream =>
-                    stream &&
-                    (stream.connection_type || 'repeater') === 'repeater' &&
+                const active = data.streams.find(stream => {
+                    if (!stream) return false;
+                    const connectionType = stream.connection_type || 'repeater';
+                    return ['repeater', 'hotspot', 'unknown'].includes(connectionType) &&
                     !stream.is_assumed &&
                     stream.dst_id === parrot.talkgroup &&
-                    stream.status === 'active'
-                );
+                    stream.status === 'active';
+                });
                 if (active) setActivity('recording', active);
             }
             return;
@@ -240,12 +242,14 @@
         if (!parrot) return;
 
         switch (event.type) {
-        case 'stream_start':
-            if ((data.connection_type || 'repeater') === 'repeater' &&
+        case 'stream_start': {
+            const connectionType = data.connection_type || 'repeater';
+            if (['repeater', 'hotspot', 'unknown'].includes(connectionType) &&
                 !data.is_assumed && data.dst_id === parrot.talkgroup) {
                 setActivity('recording', data);
             }
             break;
+        }
         case 'stream_update':
             if (activity && activity.phase === 'recording' &&
                 data.dst_id === parrot.talkgroup && matchesCurrent(data)) {
@@ -271,6 +275,11 @@
             break;
         case 'parrot_playback_started':
             setActivity('playback', data);
+            break;
+        case 'parrot_telemetry_started':
+        case 'parrot_telemetry_complete':
+        case 'parrot_telemetry_cancelled':
+            setActivity('telemetry', data);
             break;
         case 'parrot_playback_complete':
             setActivity('complete', data);

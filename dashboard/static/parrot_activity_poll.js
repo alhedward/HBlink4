@@ -11,6 +11,7 @@
         case 'recording': return '🟡 Recording';
         case 'preparing': return '🟠 Preparing playback';
         case 'playback': return '🔵 Playing back';
+        case 'telemetry': return '🟣 Voice report';
         case 'complete': return '✅ Test complete';
         case 'cancelled': return '⚠️ Test cancelled';
         default: return '🟢 Ready';
