@@ -6,77 +6,78 @@ Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current feature work: fix/parrot-dashboard-live-events-version
-Dashboard semantic version: 1.3.0 on this branch; production remains 1.2.0 until deployment
+Current work: production acceptance testing for the deployed parrot dashboard fix
+Dashboard semantic version: 1.3.0
 
 Known-good production baseline
 ------------------------------
-- main is 93262d56b1ce103576123c90e433c341abec6ee1 (PR #10, live TG9990 parrot activity and RF quality).
-- hblink-website main is 344efeb703b89126f180673d6bfdb6ddc45daec1 (PR #26 deployment pin).
-- Production CD run 33285769376 completed successfully on 2026-08-30.
-- Production is green on i-0818c2b22deb877c3 with EIP 54.206.153.208.
-- The production parrot has been RF-tested successfully: TG9990 records and echoes a completed local call back to the originating endpoint.
-- Dashboard authentication is Cognito, with the exact configured local PBKDF2 account retained as the permanent break-glass path.
-- Cognito MFA remains OPTIONAL with TOTP enabled and WebAuthn RP dmr.vk2ale.com using MULTI_FACTOR_WITH_USER_VERIFICATION.
+- The deployed HBlink4 application revision is d08214fd9329f680e14f81859ba31efbb0c9bbd5 (PR #11, parrot dashboard live-activity/version fix).
+- hblink-website production deployment main is 9bab7956a40a4af2b02fa4a62adab45e6d65bfb0 (PR #27), which pins that exact HBlink4 revision.
+- hblink-website Terraform main validation run 33287316081 completed successfully on 2026-08-30.
+- Production CD run 33287346615 completed successfully on 2026-08-30, including the fail-closed Terraform plan gate, application deployment, Cognito MFA/WebAuthn verification and temporary live-config cleanup.
+- Production remains on the established green deployment path with EIP 54.206.153.208; live EIP reconciliation passed during the deployment.
+- The production parrot itself was RF-tested successfully before this dashboard follow-up: TG9990 records and echoes a completed local call back to the originating endpoint.
+- Dashboard authentication remains Cognito, with the configured local PBKDF2 account retained as the permanent break-glass path.
 
 Parrot / echo service
 ---------------------
 - HBlink4 has an in-process local DMR parrot service based on the classic HBlink3 playback behaviour without running a second legacy HBLink daemon.
 - hblink4/parrot.py records accepted local group-voice DMRD frames and replays the original packet sequence only to the originating repeater/hotspot after a proper voice terminator.
 - Production uses TG9990, a 2-second delay, 60-ms packet cadence and a 120-second recording cap.
-- TG9990 is intentionally absent from ordinary routed TG lists. The parrot receives an empty normal route cache and is never fanned out to another local repeater, HomeBrew outbound, or OpenBridge trunk.
+- TG9990 is intentionally absent from ordinary routed TG lists. The parrot receives an empty normal route cache and is never fanned out to another local repeater, HomeBrew outbound or OpenBridge trunk.
 - A numerically identical TG received from an external trunk does not invoke the local parrot.
 - Playback is cancelled if the originating repeater disconnects or reuses the slot before/during echo.
 - Calls that exceed the configured recording cap or end through timeout/fast-terminator handling are discarded instead of replayed incompletely.
-- Lifecycle payloads include the originating DMR timeslot, so the dashboard can report TS1 or TS2 throughout recording/playback.
+- Parrot lifecycle payloads contain the originating DMR timeslot. The dashboard reports it explicitly as TS1 or TS2 throughout recording/playback activity.
 
-Dashboard local-service visibility
-----------------------------------
-- `/api/local-services` projects only non-secret enabled local-service metadata from the live HBlink4 config; it never returns repeater passphrases or the complete configuration.
-- dashboard/static/local_services.js renders the public/admin TG9990 Parrot / Echo Test card and compact header badge.
-- PR #10 added lifecycle states Ready, Recording, Preparing playback, Playing back, Complete and Cancelled plus BER/RSSI telemetry.
-
-Current dashboard defect and fix
+Dashboard local-service activity
 --------------------------------
-- After PR #10/website PR #26 production deployment, RF parrot operation still worked but Local DMR Services stayed at Ready during a live parrot session.
-- The helper had created an independent second `/ws` WebSocket and silently ignored any problem on that informational path. The main dashboard WebSocket continued to operate, leaving no visible error while the local-service card remained stale.
-- Branch fix/parrot-dashboard-live-events-version changes the public helper to subscribe to the already-established main dashboard WebSocket; the administrator page retains a standalone `/ws` fallback because it has no main dashboard socket.
-- Normal stream event fields are normalised (`rf_src` -> `src_id`, `packets` -> `packet_count`) so the fallback path shows the same radio and packet metadata as parrot-specific lifecycle events.
-- Timeslot remains explicit in the activity identity line as TS1/TS2 and is preserved through playback/completion lifecycle payloads.
-- The previous focused UI test only checked that lifecycle strings existed in JavaScript. Coverage now also verifies dashboard receiver passthrough of parrot events, shared-socket subscription, field normalisation and release/version wiring.
-- The visible dashboard version had remained hard-coded at 1.2.0 through the parrot feature rollout. The composed deployed application now publishes v1.3.0 and uses cache-buster `20260830-parrot-live-2`.
+- `/api/local-services` exposes only non-secret enabled local-service metadata from the live HBlink4 config.
+- The public/admin Local DMR Services card identifies TG9990 as a local-only Parrot / Echo Test.
+- PR #10 added monitoring-only parrot lifecycle events and BER/RSSI activity telemetry, but production testing showed the Local DMR Services card could remain at Ready during an otherwise successful RF parrot session.
+- PR #11 fixes that dashboard integration. On the public dashboard the local-service helper subscribes to the already-established main dashboard WebSocket rather than relying on a second silent informational socket; the administrator page retains a standalone WebSocket fallback.
+- Normal stream-event fields are normalised (`rf_src` -> `src_id`, `packets` -> `packet_count`) for the fallback activity path.
+- Expected UI lifecycle is Ready -> Recording -> Preparing playback -> Playing back -> Test complete (or Test cancelled when appropriate).
+- Activity identity includes source radio/callsign when known, originating repeater and TS1/TS2. Metrics include duration, packet count and existing BER/RSSI summaries when supplied by the endpoint.
+- The composed deployed dashboard now reports semantic version 1.3.0 and uses local-services asset cache-buster `20260830-parrot-live-2`.
+
+Regression coverage
+-------------------
+- HBlink4 PR #11 passed the complete Python 3.12 regression workflow before merge.
+- tests/test_parrot_activity_dashboard.py now verifies lifecycle payload metadata, dashboard receiver passthrough, shared dashboard WebSocket subscription, fallback field normalisation, timeslot display and dashboard release/version wiring.
+- No DMR routing or packet/audio exposure was introduced by the dashboard fix.
+
+Production acceptance still required
+------------------------------------
+1. RF-test TG9990 while watching Local DMR Services.
+2. Confirm the card changes Recording -> Preparing playback -> Playing back -> Test complete.
+3. Confirm the actual originating Timeslot is displayed as TS1 or TS2 and remains consistent throughout the session.
+4. Confirm source radio/repeater, duration/packet count and BER/RSSI appear where telemetry is available.
+5. Confirm the dashboard displays v1.3.0.
+6. Confirm the echo is still returned only to the originating repeater/hotspot and TG9990 remains absent from ordinary routed TG lists.
+
+Upstream observations to track
+------------------------------
+- Dashboard release/version ownership is split between server.py and the composed admin_app entry point. Direct use of dashboard.server can therefore diverge from the deployed composed application's version. A single version source would avoid stale reporting.
+- Browser WebSocket ownership is embedded in dashboard.html rather than exposed through a shared event-dispatch module. Extension helpers can otherwise create duplicate WebSocket connections or silently diverge from the main dashboard feed.
+- Informational UI failures were previously silent: a failed secondary activity socket could leave a healthy-looking Ready state. A stale/disconnected activity indicator or shared client-side event bus would improve observability.
+- The original parrot dashboard regression test asserted source-code strings rather than exercising the event path, which was insufficient to catch the production symptom. Runtime/browser-level event-state testing would improve coverage.
+- hblink4/events.py uses non-blocking stream sockets with framed messages and `sendall`; an output buffer/async writer would be safer against partial/non-blocking sends and dashboard telemetry frame loss or corruption under backpressure.
+- The non-blocking TCP EventEmitter connect path should explicitly complete/check an in-progress connection before treating it as usable; the local Unix-socket production path does not depend on that TCP edge case.
+- Existing FastAPI `on_event` deprecation warnings remain technical debt; migrate startup/shutdown handling to lifespan when convenient.
+- None of these observations currently indicate a discovered DMR routing/parrot RF-core defect; the RF echo path remained functional during the dashboard failure.
 
 Authentication and administrator controls
 -----------------------------------------
 - /admin uses Cognito for named administrators and retains the configured local username/password hash as a reserved local break-glass path.
 - Cognito administrators must belong to HBlink4Admins.
 - Cognito access/challenge tokens remain server-side behind the existing HttpOnly/CSRF session layer.
-- Optional TOTP and WebAuthn/YubiKey/passkey management are available to Cognito administrators.
-
-Production infrastructure state
--------------------------------
-- FQDN: dmr.vk2ale.com
-- Production EIP: 54.206.153.208
-- Green production instance: i-0818c2b22deb877c3
-- Blue rollback instance: i-001521c2029b3ad6a
-- Cognito user pool: ap-southeast-2_RQFyaaiHA
-- Cognito no-secret client: 4mtpo5ea7u75ous0s5q717k2um
-- Cognito administrator group: HBlink4Admins
-- SES sender: webmaster@sgars.vk2ale.com
-
-Next steps
-----------
-1. Run HBlink4 CI for this branch and merge only if green.
-2. Pin the merged HBlink4 revision in hblink-website using its normal production-only deployment workflow.
-3. Confirm the deployment does not mutate operator-maintained live TG/unit-call policy or infrastructure.
-4. RF-test TG9990 while watching Local DMR Services: Recording -> Preparing playback -> Playing back -> Complete, including source radio/repeater, TS1/TS2, duration/packet count and BER/RSSI where supplied.
-5. Confirm `/api/config` and administrator status report dashboard v1.3.0.
-6. Update both repository handovers with the final merged revisions and production run.
+- Optional TOTP and WebAuthn/YubiKey/passkey management remain available to Cognito administrators.
 
 Outstanding roadmap
 -------------------
 1. Verify delivered SGARS invitation/reset email headers and DKIM/DMARC alignment.
-2. Pursue approved external DMR trunking (VKDMR/OpenBridge discussion currently awaiting access to the VK DMR official contact channel).
+2. Pursue approved external DMR trunking after the appropriate VK DMR contact path is established.
 3. Complete hblink-website blue lifecycle automation and deployed-assets cleanup.
 4. Future option: make the dashboard installable as a PWA with conservative static-shell caching and no caching of authenticated/live status APIs.
 5. Future SGARS integration can consume `/api/local-services` through its existing Lambda proxy.
