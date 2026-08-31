@@ -62,3 +62,6 @@ class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
                 {"detail": str(exc)}, status_code=400 if update else 500
             )
         await self._send(response, scope, receive, send)
+
+
+app = AdminIdentityMiddleware(_impl.security_app.app)
