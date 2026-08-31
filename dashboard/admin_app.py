@@ -22,10 +22,13 @@ class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
                 payload = await _impl.auth_app._read_json(receive)
                 if not isinstance(payload, dict):
                     raise _impl.ParrotVoiceConfigError("Request body must be a JSON object")
+                attenuation = payload.get("voice_telemetry_attenuation_db")
+                if attenuation is None:
+                    attenuation = store.load()["voice_telemetry_attenuation_db"]
                 configuration = store.save_settings(
                     payload.get("revision"),
                     payload.get("voice_telemetry_enabled"),
-                    payload.get("voice_telemetry_attenuation_db"),
+                    attenuation,
                 )
                 _impl.server.logger.warning(
                     "Dashboard admin %s set parrot voice telemetry=%s attenuation=-%.1f dB",
