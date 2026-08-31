@@ -4,8 +4,16 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
+def admin_app_source():
+    return (
+        (ROOT / "dashboard" / "admin_app.py").read_text()
+        + "\n"
+        + (ROOT / "dashboard" / "admin_app_impl.py").read_text()
+    )
+
+
 def test_admin_helper_scripts_are_cache_busted_and_feedback_loads_before_identity():
-    source = (ROOT / "dashboard" / "admin_app.py").read_text()
+    source = admin_app_source()
 
     assert 'admin_invite_feedback.js?v={version}' in source
     assert 'admin_identity.js?v={version}' in source
