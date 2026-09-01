@@ -46,7 +46,7 @@
             </div>
             <div class="parrot-voice-level">
                 <label for="parrotVoiceAttenuation"><strong>Voice report attenuation</strong></label>
-                <input id="parrotVoiceAttenuation" type="number" min="0" max="30" step="0.5" inputmode="decimal" value="6">
+                <input id="parrotVoiceAttenuation" type="number" min="0" max="60" step="0.5" inputmode="decimal" value="6">
                 <span id="parrotVoiceAttenuationLabel">-6 dB</span>
             </div>
             <p class="subtle" style="margin:6px 0 0;">0 dB is unchanged PCM level. Higher attenuation values make only the generated voice report quieter; the echoed caller audio is untouched.</p>
@@ -140,8 +140,8 @@
         const button = document.getElementById('parrotVoiceApplyBtn');
         const attenuation = attenuationValue();
         if (!toggle || !button) return;
-        if (!Number.isFinite(attenuation) || attenuation < 0 || attenuation > 30) {
-            showMessage('Voice report attenuation must be between 0 and 30 dB.', 'error');
+        if (!Number.isFinite(attenuation) || attenuation < 0 || attenuation > 60) {
+            showMessage('Voice report attenuation must be between 0 and 60 dB.', 'error');
             return;
         }
         const enabled = !!toggle.checked;

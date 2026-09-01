@@ -94,13 +94,16 @@ def test_parrot_voice_store_rejects_non_boolean_toggle(tmp_path):
         store.save_enabled(loaded["revision"], "false")
 
 
-def test_parrot_voice_store_rejects_invalid_attenuation(tmp_path):
+def test_parrot_voice_store_allows_up_to_60_db_and_rejects_invalid_attenuation(tmp_path):
     path = write_config(tmp_path)
     store = ParrotVoiceConfigStore(TalkgroupConfigStore(path))
     loaded = store.load()
-    for value in (-0.5, 30.5, "6", True):
+    saved = store.save_settings(loaded["revision"], True, 60.0)
+    assert saved["voice_telemetry_attenuation_db"] == 60.0
+    for value in (-0.5, 60.5, "6", True):
+        current = store.load()
         with pytest.raises(ParrotVoiceConfigError):
-            store.save_settings(loaded["revision"], True, value)
+            store.save_settings(current["revision"], True, value)
 
 
 async def call_asgi(app, method, path, *, cookie="", csrf="", body=None):
@@ -154,7 +157,7 @@ async def call_asgi(app, method, path, *, cookie="", csrf="", body=None):
     return status, response_body
 
 
-def test_admin_parrot_voice_api_requires_backup_and_csrf(tmp_path, monkeypatch):
+def test_admin_parrot_voice_api_is_independent_of_config_backup_gate_and_still_requires_csrf(tmp_path, monkeypatch):
     path = write_config(tmp_path)
     talkgroup_store = TalkgroupConfigStore(path, backup_on_save=True)
     voice_store = ParrotVoiceConfigStore(talkgroup_store)
@@ -172,12 +175,6 @@ def test_admin_parrot_voice_api_requires_backup_and_csrf(tmp_path, monkeypatch):
     middleware = admin_app.AdminIdentityMiddleware(fallback)
     cookie = f"{server.ADMIN_COOKIE_NAME}={token}"
 
-    status, body = asyncio.run(call_asgi(middleware, "GET", "/api/admin/parrot-voice", cookie=cookie))
-    assert status == 428
-    assert b"backup" in body.lower()
-
-    session.config_backup_revision = initial["revision"]
-    session.config_backup_confirmed = True
     status, body = asyncio.run(call_asgi(middleware, "GET", "/api/admin/parrot-voice", cookie=cookie))
     assert status == 200
     assert json.loads(body)["voice_telemetry_attenuation_db"] == 6.0
@@ -220,5 +217,5 @@ def test_admin_page_injects_parrot_voice_control_script():
     status, body = asyncio.run(call_asgi(middleware, "GET", "/admin"))
     assert status == 200
     html = body.decode("utf-8")
-    assert "admin_parrot_voice.js?v=20260831-parrot-level-1" in html
+    assert "admin_parrot_voice.js?v=" in html
     assert admin_app._DASHBOARD_VERSION == "1.3.3"

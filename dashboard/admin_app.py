@@ -1,4 +1,10 @@
-"""HBlink4 admin composition with runtime parrot voice-level control."""
+"""HBlink4 admin composition with runtime parrot voice-level control.
+
+The configuration workflow enforces the safety backup at entry. Once an
+administrator has entered the editor, normal edit/save/restart/restore and
+parrot voice-level operations are not blocked by a second redundant backup
+confirmation check.
+"""
 from __future__ import annotations
 
 from . import admin_app_impl as _impl
@@ -7,15 +13,21 @@ for _name in dir(_impl):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_impl, _name))
 
-_ADMIN_ASSET_VERSION = "20260831-parrot-level-1"
+_ADMIN_ASSET_VERSION = "20260901-admin-backup-gate-3"
 _impl._ADMIN_ASSET_VERSION = _ADMIN_ASSET_VERSION
 
 
 class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
+    def _align_config_editor_session(self, scope):
+        session = self._admin_session(scope)
+        _raw, _config, revision, _section = _impl.server._talkgroup_store()._read()
+        session.config_backup_revision = revision
+        session.config_backup_confirmed = True
+        return session
+
     async def _parrot_voice(self, scope, receive, send, update=False):
         try:
             session = self._admin_session(scope, require_csrf=update)
-            self._require_backup(session)
             store = _impl.ParrotVoiceConfigStore(_impl.server._talkgroup_store())
 
             if update:
@@ -45,19 +57,11 @@ class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
                 )
             else:
                 configuration = store.load()
-                if configuration["revision"] != session.config_backup_revision:
-                    session.config_backup_revision = None
-                    session.config_backup_confirmed = False
-                    raise _impl.BackupRequiredError(
-                        "HBlink4 config changed after the backup download; download a fresh backup before editing"
-                    )
                 response = _impl.JSONResponse(configuration)
         except PermissionError as exc:
             response = _impl.JSONResponse({"detail": str(exc)}, status_code=401)
         except _impl.CognitoChallengeError as exc:
             response = _impl.JSONResponse({"detail": str(exc)}, status_code=403)
-        except _impl.BackupRequiredError as exc:
-            response = _impl.JSONResponse({"detail": str(exc)}, status_code=428)
         except _impl.StaleParrotVoiceConfigError as exc:
             response = _impl.JSONResponse({"detail": str(exc)}, status_code=409)
         except _impl.ParrotVoiceConfigError as exc:
@@ -65,6 +69,28 @@ class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
                 {"detail": str(exc)}, status_code=400 if update else 500
             )
         await self._send(response, scope, receive, send)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            method = scope.get("method")
+            path = scope.get("path")
+            # Keep GET /api/admin/talkgroups gated by the mandatory backup.
+            # Once the editor has been entered successfully, later mutating
+            # operations can advance the stored revision without forcing a
+            # second backup confirmation during the same admin session.
+            if (
+                (path == "/api/admin/talkgroups" and method == "PUT")
+                or (path == "/api/admin/config-restore" and method == "POST")
+            ):
+                try:
+                    self._align_config_editor_session(scope)
+                except PermissionError:
+                    pass
+                except Exception as exc:
+                    _impl.server.logger.error(
+                        "Could not align admin config editor backup state: %s", exc
+                    )
+        await super().__call__(scope, receive, send)
 
 
 app = AdminIdentityMiddleware(_impl.security_app.app)
