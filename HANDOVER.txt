@@ -1,25 +1,33 @@
 HBlink4 HANDOVER
 ================
-Updated: 2026-08-30
+Updated: 2026-09-01
 
 Repository
 ----------
 Canonical repository: https://github.com/alhedward/HBlink4.git
 Default branch: main
-Current main: c84df73b74835cbfcb6c13b06f7cf919f2d006e0
-Current fix branch: fix/parrot-ambe-49bit-packing
+Validated production base: f97d74c40902032bdb2258339c13c50227bb3f93
+Current fix branch: fix/parrot-runtime-60db
 Dashboard semantic version: 1.3.3
+
+Production incident: parrot attenuation validator mismatch
+---------------------------------------------------------
+- Production core entered a systemd restart loop after the admin/API persisted parrot.voice_telemetry_attenuation_db=60.0.
+- The admin/API intentionally accepts attenuation values from 0 through 60 dB and displays 60.0 as -60 dB relative voice-report level.
+- hblink4/parrot_voice.py on production revision f97d74c40902032bdb2258339c13c50227bb3f93 still enforced a 30 dB runtime ceiling, so the next core startup rejected an otherwise valid admin-written configuration.
+- Emergency recovery temporarily set the live attenuation back to 6.0 dB; HBlink4 then accepted hotspot connections again and TG9990 DMR-to-DMR parrot operation was confirmed working.
+- fix/parrot-runtime-60db raises only the runtime ceiling to 60 dB and adds focused regression coverage so runtime and admin validation remain aligned.
+- Do not restore an operator-selected value above 30 dB in production until the runtime fix is merged, pinned by hblink-website and deployed through normal CI/CD.
 
 Production / diagnostic state
 -----------------------------
 - Deployment repository: https://github.com/alhedward/hblink-website.git.
-- hblink-website main currently pins HBlink4 c84df73b74835cbfcb6c13b06f7cf919f2d006e0, the temporary deterministic TG9990 voice diagnostic.
-- The operator supplied hblink9990-voice.pcap after that rollout; the capture contains the deterministic diagnostic report, confirming the intended diagnostic path was active on RF.
-- TG9990 parrot echo remains local-only and works correctly.
-- Dashboard /admin retains the protected Parrot voice telemetry On/Off control and Apply & restart action.
-- Live parrot.voice_telemetry_enabled remains operator-owned and must be preserved by deployment.
 - Production runs HBlink4 natively under systemd, not Docker.
 - Live /opt/hblink4/app/config/config.json is operator-owned; preserve it across upgrades.
+- TG9990 parrot echo remains local-only and works correctly.
+- Dashboard /admin retains the protected Parrot voice telemetry On/Off and attenuation controls.
+- Live parrot.voice_telemetry_enabled and voice_telemetry_attenuation_db remain operator-owned and must be preserved by deployment.
+- Browser DMR is deployed separately by hblink-website and must not alter the ordered DMR-to-web buffering while this parrot validator fix is deployed.
 
 New RF capture findings: 49-bit root cause confirmed
 ----------------------------------------------------
@@ -38,33 +46,22 @@ New RF capture findings: 49-bit root cause confirmed
     corrected canonical:b0357c6213d29f05c5
     corrected DMR AMBE: d5ee220741b9680b2f
 
-Permanent fix branch
---------------------
-- fix/parrot-ambe-49bit-packing starts from diagnostic main c84df73b74835cbfcb6c13b06f7cf919f2d006e0.
-- hblink4/parrot_ambe.py now contains a lossless legacy sequential-b[] -> encoder encode_49bit() repacker and canonical FEC rebuild.
-- hblink4/parrot_voice_assets.py applies that migration in memory while loading the pinned legacy vocabulary. The committed archive remains the original reproducible build artifact.
-- No TTS, ffmpeg, OpenDMR executable or runtime vocoder is introduced.
-- The established DMR interleave, HomeBrew packet builder, colour code, slot handling, timing, routing and admin On/Off control remain unchanged.
-- Exact capture-derived regression coverage is added to tests/test_parrot_voice.py.
-- Runtime asset metadata records the legacy archive layout and repaired encode_49bit() representation.
-- The temporary hblink4/parrot_diag.py module, its run.py hook and its focused diagnostic test are removed, restoring normal live RF telemetry values.
-
 Safety / invariants
 -------------------
 - TG9990 stays local-only and absent from ordinary routed talkgroup lists.
 - Do not run duplicate HBlink4 cores.
-- Preserve live operator routing/config and the admin-selected voice telemetry On/Off value.
+- Preserve live operator routing/config and the admin-selected voice telemetry On/Off and attenuation values.
 - Keep Cognito primary authentication plus the local PBKDF2 break-glass administrator.
 - Never expose HomeBrew/OpenBridge passphrases, full config backups, password hashes, Cognito credentials or tokens.
-- Production must never run gTTS/ffmpeg/OpenDMR/vocoder tooling.
+- Production must never run gTTS/ffmpeg tooling.
 
 Validation and deployment next steps
 ------------------------------------
-1. Run the complete Python regression through the normal HBlink4 PR workflow using real dependencies.
-2. Merge the fix only if CI is green.
-3. Pin the exact merged HBlink4 SHA in hblink-website on a fresh deployment branch.
+1. Require HBlink4 Regression CI to pass on fix/parrot-runtime-60db.
+2. Merge only after required review/CI gates are satisfied.
+3. Pin the exact merged HBlink4 SHA in hblink-website on a fresh fix branch.
 4. Run normal hblink-website Terraform/checksum/policy CI; do not bypass gates.
 5. Merge only if green and let normal main production CD deploy while preserving live config.
 6. Verify installed HBlink4 SHA and healthy core/dashboard/Caddy.
-7. Operator enables voice telemetry and performs the RF listening acceptance test on a real radio.
-8. If speech is intelligible, retain the lossless repack solution. Whole-phrase PCM re-vocoding is unnecessary unless RF listening reveals a separate vocoder-quality issue.
+7. Restore the operator-selected attenuation up to 60 dB only after the fixed runtime is live.
+8. Keep Browser DMR ordered receive buffering and selectable talkgroup/timeslot behavior unchanged during this repair.
