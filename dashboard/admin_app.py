@@ -13,11 +13,19 @@ for _name in dir(_impl):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_impl, _name))
 
-_ADMIN_ASSET_VERSION = "20260901-admin-backup-gate-3"
+_ADMIN_ASSET_VERSION = "20260901-browser-source-1"
 _impl._ADMIN_ASSET_VERSION = _ADMIN_ASSET_VERSION
 
 
 class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
+    @staticmethod
+    def _inject_local_services_script(html: str, version: str) -> str:
+        scripts = (
+            f'\n<script src="/static/local_services.js?v={version}"></script>'
+            f'\n<script src="/static/browser_source_label.js?v={version}"></script>\n'
+        )
+        return html.replace("</body>", scripts + "</body>")
+
     def _align_config_editor_session(self, scope):
         session = self._admin_session(scope)
         _raw, _config, revision, _section = _impl.server._talkgroup_store()._read()
