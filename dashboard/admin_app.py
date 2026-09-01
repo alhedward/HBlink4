@@ -13,7 +13,7 @@ for _name in dir(_impl):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_impl, _name))
 
-_ADMIN_ASSET_VERSION = "20260901-admin-backup-gate-2"
+_ADMIN_ASSET_VERSION = "20260901-admin-backup-gate-3"
 _impl._ADMIN_ASSET_VERSION = _ADMIN_ASSET_VERSION
 
 
@@ -74,13 +74,22 @@ class AdminIdentityMiddleware(_impl.AdminIdentityMiddleware):
         if scope.get("type") == "http":
             method = scope.get("method")
             path = scope.get("path")
-            if path in {"/api/admin/talkgroups", "/api/admin/config-restore"} and method in {"GET", "PUT", "POST"}:
+            # Keep GET /api/admin/talkgroups gated by the mandatory backup.
+            # Once the editor has been entered successfully, later mutating
+            # operations can advance the stored revision without forcing a
+            # second backup confirmation during the same admin session.
+            if (
+                (path == "/api/admin/talkgroups" and method == "PUT")
+                or (path == "/api/admin/config-restore" and method == "POST")
+            ):
                 try:
                     self._align_config_editor_session(scope)
                 except PermissionError:
                     pass
                 except Exception as exc:
-                    _impl.server.logger.error("Could not align admin config editor backup state: %s", exc)
+                    _impl.server.logger.error(
+                        "Could not align admin config editor backup state: %s", exc
+                    )
         await super().__call__(scope, receive, send)
 
 
