@@ -1,8 +1,8 @@
 """Administrator controls for TG9990 spoken telemetry.
 
 The settings are written through the existing TalkgroupConfigStore atomic
-backup/replace path.  Attenuation is stored as a positive dB value: 6 means the
-PCM report is transmitted at -6 dB before AMBE encoding.
+backup/replace path.  Attenuation is stored as a positive dB value: 45 means the
+PCM report is transmitted at -45 dB before AMBE encoding.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from .admin import TalkgroupConfigStore
 MAX_DMR_ID = 0xFFFFFF
 MIN_ATTENUATION_DB = 0.0
 MAX_ATTENUATION_DB = 60.0
-DEFAULT_ATTENUATION_DB = 6.0
+DEFAULT_ATTENUATION_DB = 45.0
 
 
 class ParrotVoiceConfigError(RuntimeError):
