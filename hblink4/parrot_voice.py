@@ -19,7 +19,7 @@ for _name in dir(_impl):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_impl, _name))
 
-DEFAULT_ATTENUATION_DB = 6.0
+DEFAULT_ATTENUATION_DB = 45.0
 MAX_ATTENUATION_DB = 60.0
 _RUNTIME_ATTENUATION_DB = DEFAULT_ATTENUATION_DB
 
